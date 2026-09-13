@@ -10,6 +10,13 @@ set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Svg Network Multimedia)
 
+# qlementine calls qt_standard_project_setup(), which exists only since Qt 6.3.
+# Ubuntu 22.04 ships Qt 6.2 - provide a no-op so FetchContent still configures.
+if(NOT COMMAND qt_standard_project_setup)
+    function(qt_standard_project_setup)
+    endfunction()
+endif()
+
 # Litecoin engine (ltc_core) - expect ./ltcengine in this repo.
 set(LTCENGINE_BUILD_CLI ON CACHE BOOL "Build ltcengine CLI/TUI")
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ltcengine/CMakeLists.txt")

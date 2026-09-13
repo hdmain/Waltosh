@@ -32,6 +32,10 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(secp256k1)
 
 # Argon2id for wallet KDF (official PHC reference).
+# CMP0169: allow FetchContent_Populate for repos without a usable CMake package.
+if(POLICY CMP0169)
+  cmake_policy(SET CMP0169 OLD)
+endif()
 FetchContent_Declare(
   argon2
   GIT_REPOSITORY https://github.com/P-H-C/phc-winner-argon2.git
