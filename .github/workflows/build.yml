@@ -86,6 +86,7 @@ jobs:
             qt6-multimedia-dev \
             git \
             libx11-dev \
+            libxkbcommon-dev \
             libgl1-mesa-dev \
             libwayland-dev \
             wayland-protocols \

@@ -30,9 +30,9 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/oclero/qlementine.git
     GIT_TAG v1.4.2
     PATCH_COMMAND
-        ${CMAKE_COMMAND} -E echo "Applying qlementine patch (or skip if already applied)"
-        && (git apply --ignore-whitespace ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/qlementine-v1.4.2.patch
-            || git apply --ignore-whitespace --reverse --check ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/qlementine-v1.4.2.patch)
+        ${CMAKE_COMMAND}
+            -DQLEMENTINE_PATCH=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/qlementine-v1.4.2.patch
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply-qlementine-patch.cmake
 )
 FetchContent_MakeAvailable(qlementine)
 
