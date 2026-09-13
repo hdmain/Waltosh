@@ -71,8 +71,10 @@ private:
     void updateSendUnitButton();
     void updateSendAmountHint();
     void toggleSendAmountUnit();
+    void fillSendAmountSats(qint64 amountSats);
     void updateVanityHint();
     [[nodiscard]] qint64 sendAmountToSats() const;
+    [[nodiscard]] qint64 sendMaxSpendableSats() const;
     void refreshNavVisibility(bool unlocked);
     void setUnlockedUi(bool unlocked);
     void setBusyUi(bool busy);
@@ -108,10 +110,12 @@ private:
     QWidget* m_gatePage = nullptr;
     QLineEdit* m_passwordEdit = nullptr;
     QPlainTextEdit* m_mnemonicEdit = nullptr;
+    QWidget* m_mnemonicPanel = nullptr;
     QLabel* m_gateHint = nullptr;
     QPushButton* m_unlockBtn = nullptr;
     QPushButton* m_createBtn = nullptr;
     QPushButton* m_importBtn = nullptr;
+    QPushButton* m_restoreBtn = nullptr;
 
     QLabel* m_balanceLabel = nullptr;
     QLabel* m_fiatBalanceLabel = nullptr;
@@ -148,6 +152,8 @@ private:
     QLabel* m_sendAmountHint = nullptr;
     QPushButton* m_sendBtn = nullptr;
     QPushButton* m_sendUnitBtn = nullptr;
+    QPushButton* m_sendHalfBtn = nullptr;
+    QPushButton* m_sendAllBtn = nullptr;
     QAction* m_sendAddressWarnAction = nullptr;
     bool m_sendAmountInFiat = false;
     qint64 m_pendingSendAmountSats = 0;

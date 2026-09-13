@@ -142,7 +142,7 @@ void CoreBridge::shutdown()
 
 void CoreBridge::onCoreEvent(waltosh::core::Event event)
 {
-    // Always marshal onto the GUI thread — core callbacks arrive from worker/poller threads.
+    // Always marshal onto the GUI thread - core callbacks arrive from worker/poller threads.
     QMetaObject::invokeMethod(
         this,
         "deliverEvent",
@@ -158,7 +158,7 @@ void CoreBridge::deliverEvent(waltosh::core::Event event)
         QMutexLocker lock(&m_snapMu);
         wasOpen = m_snapshot.open;
         prevBalance = m_snapshot.balance_sats;
-        // Progress events carry an empty snapshot — keep the last real one.
+        // Progress events carry an empty snapshot - keep the last real one.
         if (event.kind != waltosh::core::EventKind::VanityProgress) {
             m_snapshot = event.snapshot;
         }

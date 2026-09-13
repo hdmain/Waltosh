@@ -34,6 +34,9 @@ public:
     [[nodiscard]] qint64 feeSatPerVb() const;
     void setFeeSatPerVb(qint64 fee);
 
+    [[nodiscard]] bool sendAmountInFiat() const;
+    void setSendAmountInFiat(bool inFiat);
+
     [[nodiscard]] QVector<PersistedTx> recentTransactions(int limit = 50) const;
     void addTransaction(const PersistedTx& tx);
 

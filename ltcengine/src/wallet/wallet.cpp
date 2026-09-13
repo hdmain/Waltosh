@@ -1,7 +1,9 @@
 #include "ltc/wallet/wallet.hpp"
 
+#include "ltc/crypto/aead.hpp"
 #include "ltc/crypto/hash.hpp"
 #include "ltc/crypto/random.hpp"
+#include "ltc/crypto/secure.hpp"
 #include "ltc/params.hpp"
 #include "ltc/util/fs.hpp"
 #include "ltc/wallet/bip39.hpp"
@@ -303,45 +305,85 @@ Wallet Wallet::import_mnemonic(const std::string& data_dir, const std::string& m
   Wallet w;
   w.data_dir_ = data_dir;
   fs::ensure_dir(data_dir);
-  w.mnemonic_ = mnemonic;
   Bytes seed = mnemonic_to_seed(mnemonic, bip39_passphrase);
   w.init_from_seed(seed);
+  // Importer already has the words; do not keep a recoverable copy in the wallet.
   w.save(password);
   return w;
 }
 
+std::string Wallet::take_mnemonic() {
+  std::string out = mnemonic_;
+  std::fill(mnemonic_.begin(), mnemonic_.end(), '\0');
+  mnemonic_.clear();
+  return out;
+}
+
 Bytes Wallet::encrypt_seed(const std::string& password, Bytes& salt_out, Bytes& iv_out) const {
+  // Legacy helper kept for LTCWALLET1 migration reads only.
   salt_out = random_bytes(16);
   iv_out = random_bytes(16);
   Bytes dk = pbkdf2_hmac_sha512(password, std::string(salt_out.begin(), salt_out.end()), 100000, 64);
   Bytes key(dk.begin(), dk.begin() + 32);
-  return aes256_cbc_encrypt(key, iv_out, seed_);
+  Bytes ct = aes256_cbc_encrypt(key, iv_out, seed_);
+  secure_wipe(dk);
+  secure_wipe(key);
+  return ct;
 }
 
 Bytes Wallet::decrypt_seed(const std::string& password, const Bytes& salt, const Bytes& iv,
                            const Bytes& ciphertext) {
   Bytes dk = pbkdf2_hmac_sha512(password, std::string(salt.begin(), salt.end()), 100000, 64);
   Bytes key(dk.begin(), dk.begin() + 32);
-  return aes256_cbc_decrypt(key, iv, ciphertext);
+  Bytes pt = aes256_cbc_decrypt(key, iv, ciphertext);
+  secure_wipe(dk);
+  secure_wipe(key);
+  return pt;
 }
 
-void Wallet::save(const std::string& password) const {
-  Bytes salt, iv;
-  Bytes ct = encrypt_seed(password, salt, iv);
+namespace {
+
+constexpr uint32_t kArgonMemoryKiB = 65536;  // 64 MiB
+constexpr uint32_t kArgonIterations = 3;
+constexpr uint32_t kArgonParallelism = 1;
+
+std::string build_wallet_plaintext(const Wallet& /*unused*/, const Bytes& seed, uint32_t gap,
+                                   const uint32_t used_recv[4], const uint32_t used_change[4],
+                                   const uint32_t next_recv[4], const uint32_t next_change[4]) {
   std::ostringstream oss;
-  oss << "LTCWALLET1\n";
-  oss << "mnemonic=" << mnemonic_ << "\n";
-  oss << "salt=" << to_hex(salt) << "\n";
-  oss << "iv=" << to_hex(iv) << "\n";
-  oss << "seed_enc=" << to_hex(ct) << "\n";
-  oss << "gap=" << gap_limit_ << "\n";
+  oss << "seed=" << to_hex(seed) << "\n";
+  oss << "gap=" << gap << "\n";
   for (int i = 0; i < 4; ++i) {
-    oss << "used_recv_" << i << "=" << used_recv_[i] << "\n";
-    oss << "used_change_" << i << "=" << used_change_[i] << "\n";
-    oss << "next_recv_" << i << "=" << next_recv_[i] << "\n";
-    oss << "next_change_" << i << "=" << next_change_[i] << "\n";
+    oss << "used_recv_" << i << "=" << used_recv[i] << "\n";
+    oss << "used_change_" << i << "=" << used_change[i] << "\n";
+    oss << "next_recv_" << i << "=" << next_recv[i] << "\n";
+    oss << "next_change_" << i << "=" << next_change[i] << "\n";
   }
+  return oss.str();
+}
+
+}  // namespace
+
+void Wallet::save(const std::string& password) const {
+  const std::string plain =
+      build_wallet_plaintext(*this, seed_, gap_limit_, used_recv_, used_change_, next_recv_,
+                             next_change_);
+  Bytes salt = random_bytes(16);
+  Bytes key = argon2id_hash(password, salt, kArgonMemoryKiB, kArgonIterations, kArgonParallelism, 64);
+  Bytes blob = aead_seal(key, Bytes(plain.begin(), plain.end()));
+  secure_wipe(key);
+
+  std::ostringstream oss;
+  oss << "WALTOSHW2\n";
+  oss << "kdf=argon2id\n";
+  oss << "m=" << kArgonMemoryKiB << "\n";
+  oss << "t=" << kArgonIterations << "\n";
+  oss << "p=" << kArgonParallelism << "\n";
+  oss << "salt=" << to_hex(salt) << "\n";
+  oss << "blob=" << to_hex(blob) << "\n";
   fs::write_file(wallet_path(), oss.str());
+  secure_wipe(salt);
+  secure_wipe(blob);
   save_meta();
   save_utxos();
   save_tx_history();
@@ -523,57 +565,107 @@ Wallet Wallet::load(const std::string& data_dir, const std::string& password) {
   w.data_dir_ = data_dir;
   std::string text = fs::read_text(fs::join(data_dir, "wallet.dat"));
   std::istringstream iss(text);
-  std::string line;
-  if (!std::getline(iss, line) || line != "LTCWALLET1")
-    throw std::runtime_error("bad wallet file magic");
+  std::string magic;
+  if (!std::getline(iss, magic)) throw std::runtime_error("bad wallet file");
 
-  std::string salt_hex, iv_hex, seed_enc_hex;
-  while (std::getline(iss, line)) {
-    auto eq = line.find('=');
-    if (eq == std::string::npos) continue;
-    std::string key = line.substr(0, eq);
-    std::string val = line.substr(eq + 1);
-    if (key == "mnemonic")
-      w.mnemonic_ = val;
-    else if (key == "salt")
-      salt_hex = val;
-    else if (key == "iv")
-      iv_hex = val;
-    else if (key == "seed_enc")
-      seed_enc_hex = val;
-    else if (key == "gap")
-      w.gap_limit_ = static_cast<uint32_t>(std::stoul(val));
-    else if (key.rfind("used_recv_", 0) == 0)
-      w.used_recv_[std::stoi(key.substr(10))] = static_cast<uint32_t>(std::stoul(val));
-    else if (key.rfind("used_change_", 0) == 0)
-      w.used_change_[std::stoi(key.substr(12))] = static_cast<uint32_t>(std::stoul(val));
-    else if (key.rfind("next_recv_", 0) == 0)
-      w.next_recv_[std::stoi(key.substr(10))] = static_cast<uint32_t>(std::stoul(val));
-    else if (key.rfind("next_change_", 0) == 0)
-      w.next_change_[std::stoi(key.substr(12))] = static_cast<uint32_t>(std::stoul(val));
+  bool migrate_to_v2 = false;
+
+  if (magic == "WALTOSHW2") {
+    uint32_t m = kArgonMemoryKiB, t = kArgonIterations, p = kArgonParallelism;
+    std::string salt_hex, blob_hex;
+    while (std::getline(iss, magic)) {
+      auto eq = magic.find('=');
+      if (eq == std::string::npos) continue;
+      std::string key = magic.substr(0, eq);
+      std::string val = magic.substr(eq + 1);
+      if (key == "m") m = static_cast<uint32_t>(std::stoul(val));
+      else if (key == "t") t = static_cast<uint32_t>(std::stoul(val));
+      else if (key == "p") p = static_cast<uint32_t>(std::stoul(val));
+      else if (key == "salt") salt_hex = val;
+      else if (key == "blob") blob_hex = val;
+    }
+    Bytes salt = from_hex(salt_hex);
+    Bytes blob = from_hex(blob_hex);
+    Bytes key = argon2id_hash(password, salt, m, t, p, 64);
+    Bytes plain_bytes = aead_open(key, blob);
+    secure_wipe(key);
+    secure_wipe(salt);
+    secure_wipe(blob);
+    std::string plain(plain_bytes.begin(), plain_bytes.end());
+    secure_wipe(plain_bytes);
+    std::istringstream piss(plain);
+    std::string line;
+    std::string seed_hex;
+    while (std::getline(piss, line)) {
+      auto eq = line.find('=');
+      if (eq == std::string::npos) continue;
+      std::string k = line.substr(0, eq);
+      std::string v = line.substr(eq + 1);
+      if (k == "seed") seed_hex = v;
+      else if (k == "gap") w.gap_limit_ = static_cast<uint32_t>(std::stoul(v));
+      else if (k.rfind("used_recv_", 0) == 0)
+        w.used_recv_[std::stoi(k.substr(10))] = static_cast<uint32_t>(std::stoul(v));
+      else if (k.rfind("used_change_", 0) == 0)
+        w.used_change_[std::stoi(k.substr(12))] = static_cast<uint32_t>(std::stoul(v));
+      else if (k.rfind("next_recv_", 0) == 0)
+        w.next_recv_[std::stoi(k.substr(10))] = static_cast<uint32_t>(std::stoul(v));
+      else if (k.rfind("next_change_", 0) == 0)
+        w.next_change_[std::stoi(k.substr(12))] = static_cast<uint32_t>(std::stoul(v));
+    }
+    secure_wipe(plain);
+    w.seed_ = from_hex(seed_hex);
+    secure_wipe(seed_hex);
+  } else if (magic == "LTCWALLET1") {
+    migrate_to_v2 = true;
+    std::string salt_hex, iv_hex, seed_enc_hex;
+    std::string line;
+    while (std::getline(iss, line)) {
+      auto eq = line.find('=');
+      if (eq == std::string::npos) continue;
+      std::string key = line.substr(0, eq);
+      std::string val = line.substr(eq + 1);
+      if (key == "mnemonic")
+        continue;
+      else if (key == "salt")
+        salt_hex = val;
+      else if (key == "iv")
+        iv_hex = val;
+      else if (key == "seed_enc")
+        seed_enc_hex = val;
+      else if (key == "gap")
+        w.gap_limit_ = static_cast<uint32_t>(std::stoul(val));
+      else if (key.rfind("used_recv_", 0) == 0)
+        w.used_recv_[std::stoi(key.substr(10))] = static_cast<uint32_t>(std::stoul(val));
+      else if (key.rfind("used_change_", 0) == 0)
+        w.used_change_[std::stoi(key.substr(12))] = static_cast<uint32_t>(std::stoul(val));
+      else if (key.rfind("next_recv_", 0) == 0)
+        w.next_recv_[std::stoi(key.substr(10))] = static_cast<uint32_t>(std::stoul(val));
+      else if (key.rfind("next_change_", 0) == 0)
+        w.next_change_[std::stoi(key.substr(12))] = static_cast<uint32_t>(std::stoul(val));
+    }
+    Bytes salt = from_hex(salt_hex);
+    Bytes iv = from_hex(iv_hex);
+    Bytes ct = from_hex(seed_enc_hex);
+    w.seed_ = decrypt_seed(password, salt, iv, ct);
+    secure_wipe(salt);
+    secure_wipe(iv);
+    secure_wipe(ct);
+  } else {
+    throw std::runtime_error("bad wallet file magic");
   }
 
-  Bytes salt = from_hex(salt_hex);
-  Bytes iv = from_hex(iv_hex);
-  Bytes ct = from_hex(seed_enc_hex);
-  w.seed_ = decrypt_seed(password, salt, iv, ct);
   w.master_ = master_from_seed(w.seed_);
   w.load_meta();
 
-  // Rebuild watched scripts without filling vanity "holes".
-  // Old path derived 0..used+gap on every unlock — after a high vanity index that
-  // could take tens of seconds and freeze the UI on Busy.
   w.addresses_.clear();
   w.script_index_.clear();
   for (int t = 0; t < 4; ++t) {
     auto type = static_cast<WalletAddressType>(t);
     std::unordered_set<uint32_t> need;
     for (uint32_t idx : w.issued_recv_[t]) need.insert(idx);
-    // Dense history (no vanity skips): materialize 0..used-1 if nothing issued yet.
     if (need.empty() && w.used_recv_[t] > 0) {
       for (uint32_t i = 0; i < w.used_recv_[t]; ++i) need.insert(i);
     }
-    // BIP44 gap look-ahead after the highest used/issued index.
     const uint32_t high = w.used_recv_[t];
     for (uint32_t i = high; i < high + w.gap_limit_; ++i) need.insert(i);
 
@@ -598,6 +690,9 @@ Wallet Wallet::load(const std::string& data_dir, const std::string& password) {
   w.load_utxos();
   w.load_tx_history();
   w.ensure_history_from_utxos();
+  if (migrate_to_v2 || text.find("\nmnemonic=") != std::string::npos) {
+    w.save(password);  // upgrade to WALTOSHW2 / strip legacy mnemonic
+  }
   return w;
 }
 
@@ -752,7 +847,7 @@ std::string Wallet::normalize_vanity_pattern(WalletAddressType type, const std::
     }
     if (out.empty()) {
       throw std::runtime_error(
-          "Word is only the address prefix — add more characters (e.g. Love → ove after L)");
+          "Word is only the address prefix - add more characters (e.g. Love → ove after L)");
     }
   }
 
@@ -811,7 +906,7 @@ uint32_t Wallet::find_vanity_index(
     try {
       child = derive_child(chain, idx);
     } catch (...) {
-      return false;  // rare invalid IL — skip
+      return false;  // rare invalid IL - skip
     }
     if (!child.is_private || child.key.size() != 32) return false;
 
@@ -916,7 +1011,7 @@ uint32_t Wallet::find_vanity_index(
     throw std::runtime_error("Vanity search cancelled");
   }
   if (timed_out.load(std::memory_order_relaxed)) {
-    throw std::runtime_error("No address found within 5 minutes — try a shorter word");
+    throw std::runtime_error("No address found within 5 minutes - try a shorter word");
   }
   throw std::runtime_error("Vanity search cancelled");
 }

@@ -169,7 +169,7 @@ void PriceChartWidget::paintEvent(QPaintEvent* event)
                QStringLiteral("LTC / %1 · %2d%3").arg(m_chart.fiatCode).arg(m_chart.days).arg(liveTag));
     p.drawText(QRectF(12, height() - 22, width() - 24, 18),
                Qt::AlignRight | Qt::AlignVCenter,
-               QStringLiteral("%1 — %2")
+               QStringLiteral("%1 - %2")
                    .arg(minP + pad, 0, 'f', 2)
                    .arg(maxP - pad, 0, 'f', 2));
 }

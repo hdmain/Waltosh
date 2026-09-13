@@ -13,6 +13,7 @@ constexpr auto kBackdrop = "ui/backdropType";
 constexpr auto kFiat = "ui/fiatCurrency";
 constexpr auto kChartDays = "ui/chartDays";
 constexpr auto kFeeSatPerVb = "ui/feeSatPerVb";
+constexpr auto kSendAmountInFiat = "ui/sendAmountInFiat";
 constexpr auto kRecentTx = "history/recentTransactions";
 constexpr int kMaxStoredTx = 100;
 
@@ -81,6 +82,16 @@ qint64 AppSettings::feeSatPerVb() const
 void AppSettings::setFeeSatPerVb(qint64 fee)
 {
     m_settings.setValue(QLatin1String(kFeeSatPerVb), qMax<qint64>(1, fee));
+}
+
+bool AppSettings::sendAmountInFiat() const
+{
+    return m_settings.value(QLatin1String(kSendAmountInFiat), false).toBool();
+}
+
+void AppSettings::setSendAmountInFiat(bool inFiat)
+{
+    m_settings.setValue(QLatin1String(kSendAmountInFiat), inFiat);
 }
 
 QVector<PersistedTx> AppSettings::recentTransactions(int limit) const

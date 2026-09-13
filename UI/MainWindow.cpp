@@ -2,6 +2,7 @@
 
 #include "CoreBridge.h"
 #include "MarketTypes.h"
+#include "MnemonicBackupDialog.h"
 #include "PriceChartWidget.h"
 #include "PriceService.h"
 
@@ -241,7 +242,7 @@ void styleLargeCombo(QComboBox* combo, int minWidth = 280)
     layout->setSpacing(4);
     auto* cap = new QLabel(caption, tile);
     cap->setObjectName(QStringLiteral("metricCaption"));
-    auto* value = new QLabel(QStringLiteral("—"), tile);
+    auto* value = new QLabel(QStringLiteral("-"), tile);
     value->setObjectName(QStringLiteral("metricValue"));
     value->setWordWrap(true);
     layout->addWidget(cap);
@@ -678,16 +679,29 @@ MainWindow::MainWindow(
         Q_UNUSED(msg);
     });
     connect(m_core, &CoreBridge::walletCreated, this, [this](const QString& mnemonic) {
-        QMessageBox::information(
-            this,
-            QStringLiteral("Backup your mnemonic"),
-            QStringLiteral("Write these words down and store them offline.\n\n%1").arg(mnemonic));
-        m_passwordEdit->clear();
-        m_mnemonicEdit->clear();
+        MnemonicBackupDialog dlg(mnemonic, this);
+        dlg.exec();
+        // Best-effort wipe of the queued signal copy we hold.
+        QString wipe = mnemonic;
+        for (QChar& ch : wipe) {
+            ch = QChar(0);
+        }
+        if (m_passwordEdit) {
+            m_passwordEdit->clear();
+        }
+        if (m_mnemonicEdit) {
+            m_mnemonicEdit->clear();
+        }
+        if (m_restoreBtn) {
+            m_restoreBtn->setChecked(false);
+        }
     });
     connect(m_core, &CoreBridge::walletImported, this, [this]() {
         m_passwordEdit->clear();
         m_mnemonicEdit->clear();
+        if (m_restoreBtn) {
+            m_restoreBtn->setChecked(false);
+        }
         showMessage(QStringLiteral("Mnemonic imported."));
     });
     connect(m_core, &CoreBridge::addressReady, this, [this](const QString& address) {
@@ -929,9 +943,22 @@ void MainWindow::rebuildGateUi(QWidget* page)
     m_passwordEdit->setEchoMode(QLineEdit::Password);
     m_passwordEdit->setPlaceholderText(QStringLiteral("Wallet password"));
 
-    m_mnemonicEdit = new QPlainTextEdit(panel);
-    m_mnemonicEdit->setPlaceholderText(QStringLiteral("BIP39 mnemonic (import only)"));
+    m_mnemonicPanel = new QWidget(panel);
+    auto* mnemonicLayout = new QVBoxLayout(m_mnemonicPanel);
+    mnemonicLayout->setContentsMargins(0, 8, 0, 0);
+    mnemonicLayout->setSpacing(8);
+
+    m_mnemonicEdit = new QPlainTextEdit(m_mnemonicPanel);
+    m_mnemonicEdit->setPlaceholderText(QStringLiteral("BIP39 mnemonic (12/24 words)"));
     m_mnemonicEdit->setFixedHeight(88);
+
+    m_importBtn = new QPushButton(QStringLiteral("Import mnemonic"), m_mnemonicPanel);
+    m_importBtn->setObjectName(QStringLiteral("secondaryButton"));
+
+    mnemonicLayout->addWidget(
+        makeLabeledField(m_mnemonicPanel, QStringLiteral("Mnemonic"), m_mnemonicEdit));
+    mnemonicLayout->addWidget(m_importBtn, 0, Qt::AlignLeft);
+    m_mnemonicPanel->setVisible(false);
 
     auto* row = new QHBoxLayout;
     row->setSpacing(8);
@@ -941,17 +968,20 @@ void MainWindow::rebuildGateUi(QWidget* page)
     m_unlockBtn->setAutoDefault(true);
     m_createBtn = new QPushButton(QStringLiteral("Create wallet"), panel);
     m_createBtn->setObjectName(QStringLiteral("secondaryButton"));
-    m_importBtn = new QPushButton(QStringLiteral("Import mnemonic"), panel);
-    m_importBtn->setObjectName(QStringLiteral("secondaryButton"));
+    m_restoreBtn = new QPushButton(QStringLiteral("Restore / Backup"), panel);
+    m_restoreBtn->setObjectName(QStringLiteral("secondaryButton"));
+    m_restoreBtn->setCheckable(true);
+    m_restoreBtn->setToolTip(
+        QStringLiteral("Show mnemonic field to restore a wallet from backup words"));
     row->addWidget(m_unlockBtn);
     row->addWidget(m_createBtn);
-    row->addWidget(m_importBtn);
+    row->addWidget(m_restoreBtn);
     row->addStretch(1);
 
     panelLayout->addWidget(m_gateHint);
     panelLayout->addWidget(makeLabeledField(panel, QStringLiteral("Password"), m_passwordEdit));
-    panelLayout->addWidget(makeLabeledField(panel, QStringLiteral("Mnemonic"), m_mnemonicEdit));
     panelLayout->addLayout(row);
+    panelLayout->addWidget(m_mnemonicPanel);
 
     layout->addWidget(title);
     layout->addWidget(panel);
@@ -964,21 +994,54 @@ void MainWindow::rebuildGateUi(QWidget* page)
                 m_core->cancelVanity();
             }
         }
-        m_core->unlock(m_passwordEdit->text());
+        const QString pass = m_passwordEdit->text();
+        m_core->unlock(pass);
+        if (m_passwordEdit) {
+            m_passwordEdit->clear();
+        }
     });
     connect(m_createBtn, &QPushButton::clicked, this, [this]() {
         if (m_core) {
             m_core->cancelVanity();
         }
         m_vanitySearching = false;
-        m_core->createWallet(m_passwordEdit->text());
+        const QString pass = m_passwordEdit->text();
+        m_core->createWallet(pass);
+        if (m_passwordEdit) {
+            m_passwordEdit->clear();
+        }
+    });
+    connect(m_restoreBtn, &QPushButton::toggled, this, [this](bool on) {
+        if (m_mnemonicPanel) {
+            m_mnemonicPanel->setVisible(on);
+        }
+        if (on && m_mnemonicEdit) {
+            m_mnemonicEdit->setFocus();
+        } else if (m_mnemonicEdit) {
+            m_mnemonicEdit->clear();
+        }
+        if (m_restoreBtn) {
+            m_restoreBtn->setText(on ? QStringLiteral("Hide mnemonic")
+                                     : QStringLiteral("Restore / Backup"));
+        }
     });
     connect(m_importBtn, &QPushButton::clicked, this, [this]() {
         if (m_core) {
             m_core->cancelVanity();
         }
         m_vanitySearching = false;
-        m_core->importWallet(m_mnemonicEdit->toPlainText(), m_passwordEdit->text());
+        const QString mnemonic = m_mnemonicEdit->toPlainText();
+        const QString pass = m_passwordEdit->text();
+        m_core->importWallet(mnemonic, pass);
+        if (m_mnemonicEdit) {
+            m_mnemonicEdit->clear();
+        }
+        if (m_passwordEdit) {
+            m_passwordEdit->clear();
+        }
+        if (m_restoreBtn) {
+            m_restoreBtn->setChecked(false);
+        }
     });
 }
 
@@ -999,19 +1062,19 @@ void MainWindow::rebuildOverview(QWidget* page)
     metaRow->setContentsMargins(0, 6, 0, 0);
     metaRow->setSpacing(0);
 
-    m_fiatBalanceLabel = new QLabel(QStringLiteral("—"), page);
+    m_fiatBalanceLabel = new QLabel(QStringLiteral("-"), page);
     m_fiatBalanceLabel->setObjectName(QStringLiteral("balanceMeta"));
 
     auto* dot1 = new QLabel(QStringLiteral("  ·  "), page);
     dot1->setObjectName(QStringLiteral("balanceMetaSep"));
 
-    m_change24hLabel = new QLabel(QStringLiteral("—"), page);
+    m_change24hLabel = new QLabel(QStringLiteral("-"), page);
     m_change24hLabel->setObjectName(QStringLiteral("change24hLabel"));
 
     auto* dot2 = new QLabel(QStringLiteral("  ·  "), page);
     dot2->setObjectName(QStringLiteral("balanceMetaSep"));
 
-    m_spotPriceLabel = new QLabel(QStringLiteral("—"), page);
+    m_spotPriceLabel = new QLabel(QStringLiteral("-"), page);
     m_spotPriceLabel->setObjectName(QStringLiteral("balanceMeta"));
 
     metaRow->addWidget(m_fiatBalanceLabel);
@@ -1068,7 +1131,7 @@ void MainWindow::rebuildOverview(QWidget* page)
     overviewHardRefresh->setFixedSize(36, 36);
     overviewHardRefresh->setCursor(Qt::PointingHandCursor);
     overviewHardRefresh->setToolTip(
-        QStringLiteral("Hard refresh — recheck headers and recent blocks"));
+        QStringLiteral("Hard refresh - recheck headers and recent blocks"));
     overviewHardRefresh->setEnabled(false);
     m_hardRefreshBtn = overviewHardRefresh;
 
@@ -1126,7 +1189,7 @@ void MainWindow::rebuildOverview(QWidget* page)
     connect(m_overviewCopyBtn, &QPushButton::clicked, this, [this]() {
         const QString addr = m_overviewAddressLabel ? m_overviewAddressLabel->text().trimmed() : QString();
         if (addr.isEmpty() || addr == QLatin1String("Unlock to show an address")
-            || addr == QLatin1String("—")) {
+            || addr == QLatin1String("-")) {
             showMessage(QStringLiteral("No address to copy."), true);
             return;
         }
@@ -1192,8 +1255,8 @@ void MainWindow::rebuildReceive(QWidget* page)
 
     m_addrTypeCombo = new QComboBox(panel);
     styleLargeCombo(m_addrTypeCombo, 320);
-    // Nested first — widest Litecoin wallet/exchange support (better than bare Native/Taproot).
-    m_addrTypeCombo->addItem(QStringLiteral("Nested SegWit (M…) — recommended"));
+    // Nested first - widest Litecoin wallet/exchange support (better than bare Native/Taproot).
+    m_addrTypeCombo->addItem(QStringLiteral("Nested SegWit (M…) - recommended"));
     m_addrTypeCombo->addItem(QStringLiteral("Native SegWit (ltc1q…)"));
     m_addrTypeCombo->addItem(QStringLiteral("Legacy (L…)"));
     m_addrTypeCombo->addItem(QStringLiteral("Taproot (ltc1p…)"));
@@ -1212,7 +1275,7 @@ void MainWindow::rebuildReceive(QWidget* page)
 
     m_vanityPrefixCheck = new QCheckBox(QStringLiteral("Word at the start of the address"), panel);
     m_vanityPrefixCheck->setToolTip(
-        QStringLiteral("After M/L or ltc1q/ltc1p — e.g. Mlove… or ltc1qlove…"));
+        QStringLiteral("After M/L or ltc1q/ltc1p - e.g. Mlove… or ltc1qlove…"));
 
     m_vanityHintLabel = new QLabel(panel);
     m_vanityHintLabel->setObjectName(QStringLiteral("fieldCaption"));
@@ -1330,7 +1393,7 @@ void MainWindow::rebuildSend(QWidget* page)
     cardLayout->setContentsMargins(22, 22, 22, 22);
     cardLayout->setSpacing(14);
 
-    m_sendAvailableLabel = new QLabel(QStringLiteral("Available —"), card);
+    m_sendAvailableLabel = new QLabel(QStringLiteral("Available -"), card);
     m_sendAvailableLabel->setObjectName(QStringLiteral("fieldCaption"));
     m_sendAvailableLabel->setAlignment(Qt::AlignCenter);
 
@@ -1373,9 +1436,26 @@ void MainWindow::rebuildSend(QWidget* page)
     amountLayout->addWidget(m_sendAmountEdit, 1);
     amountLayout->addWidget(m_sendUnitBtn, 0, Qt::AlignVCenter);
 
-    m_sendAmountHint = new QLabel(QStringLiteral("≈ —"), card);
+    m_sendAmountHint = new QLabel(QStringLiteral("≈ -"), card);
     m_sendAmountHint->setObjectName(QStringLiteral("sendAmountHint"));
     m_sendAmountHint->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+
+    auto* quickRow = new QHBoxLayout;
+    quickRow->setContentsMargins(0, 0, 0, 0);
+    quickRow->setSpacing(8);
+    m_sendHalfBtn = new QPushButton(QStringLiteral("Half"), card);
+    m_sendHalfBtn->setObjectName(QStringLiteral("sendQuickButton"));
+    m_sendHalfBtn->setCursor(Qt::PointingHandCursor);
+    m_sendHalfBtn->setFlat(true);
+    m_sendHalfBtn->setToolTip(QStringLiteral("Use half of available balance"));
+    m_sendAllBtn = new QPushButton(QStringLiteral("All"), card);
+    m_sendAllBtn->setObjectName(QStringLiteral("sendQuickButton"));
+    m_sendAllBtn->setCursor(Qt::PointingHandCursor);
+    m_sendAllBtn->setFlat(true);
+    m_sendAllBtn->setToolTip(QStringLiteral("Use maximum spendable amount (balance minus fee reserve)"));
+    quickRow->addWidget(m_sendHalfBtn);
+    quickRow->addWidget(m_sendAllBtn);
+    quickRow->addStretch(1);
 
     m_sendBtn = new QPushButton(QStringLiteral("Send"), card);
     m_sendBtn->setObjectName(QStringLiteral("primaryButton"));
@@ -1385,6 +1465,7 @@ void MainWindow::rebuildSend(QWidget* page)
     cardLayout->addWidget(m_sendToEdit);
     cardLayout->addWidget(amountWrap);
     cardLayout->addWidget(m_sendAmountHint);
+    cardLayout->addLayout(quickRow);
     cardLayout->addSpacing(4);
     cardLayout->addWidget(m_sendBtn);
 
@@ -1398,7 +1479,7 @@ void MainWindow::rebuildSend(QWidget* page)
     layout->addLayout(centerRow);
     layout->addStretch(1);
 
-    m_sendAmountInFiat = false;
+    m_sendAmountInFiat = m_settings.sendAmountInFiat();
     updateSendUnitButton();
     updateSendAmountHint();
 
@@ -1409,6 +1490,12 @@ void MainWindow::rebuildSend(QWidget* page)
         updateSendAmountHint();
     });
     connect(m_sendUnitBtn, &QPushButton::clicked, this, &MainWindow::toggleSendAmountUnit);
+    connect(m_sendHalfBtn, &QPushButton::clicked, this, [this]() {
+        fillSendAmountSats(m_lastBalanceSats / 2);
+    });
+    connect(m_sendAllBtn, &QPushButton::clicked, this, [this]() {
+        fillSendAmountSats(sendMaxSpendableSats());
+    });
     connect(m_sendBtn, &QPushButton::clicked, this, [this]() {
         const QString to = m_sendToEdit ? m_sendToEdit->text().trimmed() : QString();
         if (!CoreBridge::isValidAddress(to)) {
@@ -1504,7 +1591,7 @@ void MainWindow::rebuildSync(QWidget* page)
     auto* extraLayout = qobject_cast<QVBoxLayout*>(extraPanel->layout());
     auto* extraCaption = new QLabel(QStringLiteral("Details"), extraPanel);
     extraCaption->setObjectName(QStringLiteral("sectionTitle"));
-    m_syncExtraLabel = new QLabel(QStringLiteral("—"), extraPanel);
+    m_syncExtraLabel = new QLabel(QStringLiteral("-"), extraPanel);
     m_syncExtraLabel->setObjectName(QStringLiteral("contentBody"));
     m_syncExtraLabel->setWordWrap(true);
     m_syncExtraLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -1564,7 +1651,7 @@ void MainWindow::rebuildSettings(QWidget* page)
     m_fiatCombo = new QComboBox(panel);
     styleLargeCombo(m_fiatCombo, 320);
     for (const FiatCurrency& fiat : supportedFiatCurrencies()) {
-        m_fiatCombo->addItem(QStringLiteral("%1 — %2").arg(fiat.code, fiat.name), fiat.code);
+        m_fiatCombo->addItem(QStringLiteral("%1 - %2").arg(fiat.code, fiat.name), fiat.code);
     }
 
     m_darkModeCheck = new QCheckBox(QStringLiteral("Dark mode"), panel);
@@ -1627,11 +1714,14 @@ void MainWindow::setUnlockedUi(bool unlocked)
         m_lockBtn->setEnabled(unlocked && !m_core->isBusy());
         m_lockBtn->setVisible(unlocked);
     }
+    if (!unlocked && m_restoreBtn) {
+        m_restoreBtn->setChecked(false);
+    }
     if (m_gateHint) {
         m_gateHint->setText(
             m_core->walletExists()
-                ? QStringLiteral("A wallet was found on disk. Enter your password to unlock, or import into a fresh data dir.")
-                : QStringLiteral("No wallet yet. Create one or import a BIP39 mnemonic."));
+                ? QStringLiteral("A wallet was found on disk. Enter your password to unlock, or use Restore / Backup in a fresh data dir.")
+                : QStringLiteral("No wallet yet. Create one, or open Restore / Backup to import a mnemonic."));
     }
     setBusyUi(m_core->isBusy());
 }
@@ -1669,7 +1759,7 @@ void MainWindow::setBusyUi(bool busy)
 {
     const bool open = m_core && m_core->isOpen();
     const bool exists = m_core && m_core->walletExists();
-    // Unlock/create/import must stay clickable while vanity is grinding — they cancel it.
+    // Unlock/create/import must stay clickable while vanity is grinding - they cancel it.
     if (m_unlockBtn) {
         m_unlockBtn->setEnabled(exists && !open);
     }
@@ -1678,6 +1768,9 @@ void MainWindow::setBusyUi(bool busy)
     }
     if (m_importBtn) {
         m_importBtn->setEnabled(!open);
+    }
+    if (m_restoreBtn) {
+        m_restoreBtn->setEnabled(!open);
     }
     if (m_newAddressBtn) {
         m_newAddressBtn->setEnabled(!busy && open);
@@ -1703,11 +1796,17 @@ void MainWindow::setBusyUi(bool busy)
     if (m_overviewCopyBtn) {
         const QString addr = m_overviewAddressLabel ? m_overviewAddressLabel->text().trimmed() : QString();
         const bool hasAddr = !addr.isEmpty() && addr != QLatin1String("Unlock to show an address")
-            && addr != QLatin1String("—");
+            && addr != QLatin1String("-");
         m_overviewCopyBtn->setEnabled(!busy && open && hasAddr);
     }
     if (m_sendBtn) {
         m_sendBtn->setEnabled(!busy && open);
+    }
+    if (m_sendHalfBtn) {
+        m_sendHalfBtn->setEnabled(!busy && open && m_lastBalanceSats > 0);
+    }
+    if (m_sendAllBtn) {
+        m_sendAllBtn->setEnabled(!busy && open && sendMaxSpendableSats() > 0);
     }
     if (m_hardRefreshBtn) {
         m_hardRefreshBtn->setEnabled(!busy && open && !(m_core && m_core->snapshot().sync.hard_refresh));
@@ -1733,10 +1832,10 @@ void MainWindow::applySnapshot(const waltosh::core::Snapshot& snap)
 
     if (m_gateHint) {
         QString hint = snap.exists
-            ? QStringLiteral("A wallet was found on disk. Enter your password to unlock, or import into a fresh data dir.")
-            : QStringLiteral("No wallet yet. Create one or import a BIP39 mnemonic.");
+            ? QStringLiteral("A wallet was found on disk. Enter your password to unlock, or use Restore / Backup in a fresh data dir.")
+            : QStringLiteral("No wallet yet. Create one, or open Restore / Backup to import a mnemonic.");
         if (snap.sync.running) {
-            hint += QStringLiteral("\n\nChain sync is already warming in the background (peers & headers) — no password needed for that.");
+            hint += QStringLiteral("\n\nChain sync is already warming in the background (peers & headers) - no password needed for that.");
             if (snap.sync.tip_height > 0) {
                 hint += QStringLiteral(" Tip height %1 · %2 peer(s).")
                             .arg(snap.sync.tip_height)
@@ -1750,11 +1849,17 @@ void MainWindow::applySnapshot(const waltosh::core::Snapshot& snap)
 
     if (!snap.open) {
         m_lastBalanceSats = 0;
+        if (m_sendHalfBtn) {
+            m_sendHalfBtn->setEnabled(false);
+        }
+        if (m_sendAllBtn) {
+            m_sendAllBtn->setEnabled(false);
+        }
         if (m_balanceLabel) {
-            m_balanceLabel->setText(QStringLiteral("—"));
+            m_balanceLabel->setText(QStringLiteral("-"));
         }
         if (m_fiatBalanceLabel) {
-            m_fiatBalanceLabel->setText(QStringLiteral("—"));
+            m_fiatBalanceLabel->setText(QStringLiteral("-"));
         }
         if (m_footerStatus) {
             if (snap.busy) {
@@ -1780,7 +1885,7 @@ void MainWindow::applySnapshot(const waltosh::core::Snapshot& snap)
         }
         if (m_syncPhaseValue) {
             m_syncPhaseValue->setText(
-                snap.sync.running ? QString::fromStdString(snap.sync.phase) : QStringLiteral("—"));
+                snap.sync.running ? QString::fromStdString(snap.sync.phase) : QStringLiteral("-"));
         }
         if (m_syncConnValue) {
             m_syncConnValue->setText(
@@ -1789,18 +1894,18 @@ void MainWindow::applySnapshot(const waltosh::core::Snapshot& snap)
         }
         if (m_syncProgressValue) {
             m_syncProgressValue->setText(
-                snap.sync.running ? QString::fromStdString(snap.sync.progress) : QStringLiteral("—"));
+                snap.sync.running ? QString::fromStdString(snap.sync.progress) : QStringLiteral("-"));
         }
         if (m_syncTipValue) {
             m_syncTipValue->setText(snap.sync.running ? QString::number(snap.sync.tip_height)
-                                                     : QStringLiteral("—"));
+                                                     : QStringLiteral("-"));
         }
         if (m_syncPeersValue) {
             m_syncPeersValue->setText(snap.sync.running ? QString::number(snap.sync.peers)
-                                                       : QStringLiteral("—"));
+                                                       : QStringLiteral("-"));
         }
         if (m_syncMatchedValue) {
-            m_syncMatchedValue->setText(QStringLiteral("—"));
+            m_syncMatchedValue->setText(QStringLiteral("-"));
         }
         if (m_syncExtraLabel) {
             if (snap.sync.running) {
@@ -1822,7 +1927,7 @@ void MainWindow::applySnapshot(const waltosh::core::Snapshot& snap)
         }
         m_wasHardRefreshing = false;
     if (m_sendAvailableLabel) {
-        m_sendAvailableLabel->setText(QStringLiteral("Available —"));
+        m_sendAvailableLabel->setText(QStringLiteral("Available -"));
     }
         if (m_addressList) {
             m_addressList->clear();
@@ -1849,6 +1954,12 @@ void MainWindow::applySnapshot(const waltosh::core::Snapshot& snap)
     if (m_sendAvailableLabel) {
         m_sendAvailableLabel->setText(QStringLiteral("Available %1").arg(bal));
     }
+    if (m_sendHalfBtn) {
+        m_sendHalfBtn->setEnabled(!snap.busy && m_lastBalanceSats > 0);
+    }
+    if (m_sendAllBtn) {
+        m_sendAllBtn->setEnabled(!snap.busy && sendMaxSpendableSats() > 0);
+    }
 
     const QString phase = QString::fromStdString(snap.sync.phase);
     const QString progress = QString::fromStdString(snap.sync.progress);
@@ -1873,7 +1984,7 @@ void MainWindow::applySnapshot(const waltosh::core::Snapshot& snap)
     } else if (!detail.isEmpty() && (phase.contains(QStringLiteral("reconnect"), Qt::CaseInsensitive)
                                      || conn.contains(QStringLiteral("disconnect"), Qt::CaseInsensitive))) {
         refreshStatus = detail;
-    } else if (!progress.isEmpty() && progress != QLatin1String("—")) {
+    } else if (!progress.isEmpty() && progress != QLatin1String("-")) {
         refreshStatus = progress;
     }
 
@@ -1888,7 +1999,7 @@ void MainWindow::applySnapshot(const waltosh::core::Snapshot& snap)
     }
     if (m_syncRefreshStatusLabel) {
         m_syncRefreshStatusLabel->setText(
-            QStringLiteral("Status: %1\n%2").arg(refreshStatus, detail.isEmpty() ? QStringLiteral("—") : detail));
+            QStringLiteral("Status: %1\n%2").arg(refreshStatus, detail.isEmpty() ? QStringLiteral("-") : detail));
     }
 
     const bool refreshing = snap.sync.hard_refresh || snap.sync.rescanning;
@@ -1918,7 +2029,7 @@ void MainWindow::applySnapshot(const waltosh::core::Snapshot& snap)
             return pct > 100 ? 100 : pct;
         };
         const int pct = syncPercent();
-        QString footer = conn.isEmpty() ? QStringLiteral("—") : conn;
+        QString footer = conn.isEmpty() ? QStringLiteral("-") : conn;
         if (pct >= 0) {
             footer += QStringLiteral("\nblocks: %1%").arg(pct);
         }
@@ -1933,13 +2044,13 @@ void MainWindow::applySnapshot(const waltosh::core::Snapshot& snap)
         m_footerStatus->setText(footer);
     }
     if (m_syncPhaseValue) {
-        m_syncPhaseValue->setText(phase.isEmpty() ? QStringLiteral("—") : phase);
+        m_syncPhaseValue->setText(phase.isEmpty() ? QStringLiteral("-") : phase);
     }
     if (m_syncConnValue) {
-        m_syncConnValue->setText(conn.isEmpty() ? QStringLiteral("—") : conn);
+        m_syncConnValue->setText(conn.isEmpty() ? QStringLiteral("-") : conn);
     }
     if (m_syncProgressValue) {
-        m_syncProgressValue->setText(progress.isEmpty() ? QStringLiteral("—") : progress);
+        m_syncProgressValue->setText(progress.isEmpty() ? QStringLiteral("-") : progress);
     }
     if (m_syncTipValue) {
         m_syncTipValue->setText(QString::number(snap.sync.tip_height));
@@ -1992,7 +2103,7 @@ void MainWindow::applySnapshot(const waltosh::core::Snapshot& snap)
     if (snap.open) {
         QString current = m_overviewAddressLabel ? m_overviewAddressLabel->text().trimmed() : QString();
         const bool placeholder = current.isEmpty() || current == QLatin1String("Unlock to show an address")
-            || current == QLatin1String("—");
+            || current == QLatin1String("-");
 
         QString nested;
         QString fallback;
@@ -2016,14 +2127,14 @@ void MainWindow::applySnapshot(const waltosh::core::Snapshot& snap)
             } else if (m_receiveAddressEdit && !m_receiveAddressEdit->text().trimmed().isEmpty()) {
                 setOverviewReceiveAddress(m_receiveAddressEdit->text().trimmed());
             } else {
-                setOverviewReceiveAddress(QStringLiteral("—"));
+                setOverviewReceiveAddress(QStringLiteral("-"));
             }
         } else if (!nested.isEmpty() && current.startsWith(QStringLiteral("ltc1"))) {
-            // Prefer Nested over Native/Taproot when both exist — better wallet support.
+            // Prefer Nested over Native/Taproot when both exist - better wallet support.
             setOverviewReceiveAddress(nested);
         }
 
-        // Existing wallets may only have Native — mint Nested once as the default type.
+        // Existing wallets may only have Native - mint Nested once as the default type.
         if (nested.isEmpty() && !m_requestedDefaultNested && !snap.busy) {
             m_requestedDefaultNested = true;
             m_core->newAddress(0);
@@ -2085,6 +2196,10 @@ void MainWindow::loadPersistedSettings()
         m_sendFeeEdit->setText(QString::number(m_settings.feeSatPerVb()));
     }
 
+    m_sendAmountInFiat = m_settings.sendAmountInFiat();
+    updateSendUnitButton();
+    updateSendAmountHint();
+
     m_loadingSettings = false;
 }
 
@@ -2145,7 +2260,7 @@ void MainWindow::applyMarketQuote(const MarketQuote& quote)
                                        : (up ? QColor(QStringLiteral("#3ecf8e")) : QColor(QStringLiteral("#f07178")));
     const QString changeText = q.valid
         ? QStringLiteral("%1%").arg(QLocale::system().toString(qAbs(q.change24hPct), 'f', 2))
-        : QStringLiteral("—");
+        : QStringLiteral("-");
     const QPixmap trendPix = q.valid
         ? tintedSvgIcon(
                   up ? QStringLiteral(":/icons/trending-up.svg") : QStringLiteral(":/icons/trending-down.svg"),
@@ -2174,7 +2289,7 @@ void MainWindow::applyMarketQuote(const MarketQuote& quote)
     styleChangeLabel(m_change24hLabel, changeText);
     styleChangeLabel(
         m_chartChangeLabel,
-        q.valid ? QStringLiteral("%1 24h").arg(changeText) : QStringLiteral("24h change: —"));
+        q.valid ? QStringLiteral("%1 24h").arg(changeText) : QStringLiteral("24h change: -"));
 
     if (m_spotPriceLabel) {
         m_spotPriceLabel->setText(
@@ -2187,7 +2302,7 @@ void MainWindow::applyMarketQuote(const MarketQuote& quote)
             const double ltc = static_cast<double>(m_lastBalanceSats) / 100000000.0;
             m_fiatBalanceLabel->setText(formatFiatAmount(ltc * q.price));
         } else if (!m_core->isOpen()) {
-            m_fiatBalanceLabel->setText(QStringLiteral("—"));
+            m_fiatBalanceLabel->setText(QStringLiteral("-"));
         } else if (q.valid) {
             m_fiatBalanceLabel->setText(formatFiatAmount(0.0));
         } else {
@@ -2455,7 +2570,7 @@ void MainWindow::updateVanityHint()
     const QString where = prefix
         ? QStringLiteral(
               "Word right after %1 (e.g. %1love…). If the word starts with %1 it is stripped. "
-              "Harder — max %2 effective chars.")
+              "Harder - max %2 effective chars.")
               .arg(fixed)
               .arg(maxLen)
         : QStringLiteral("Word anywhere in the address. Max %1 chars.").arg(maxLen);
@@ -2463,7 +2578,7 @@ void MainWindow::updateVanityHint()
         QStringLiteral("%1%2 ~5 min · %3 threads. %4")
             .arg(where, stripNote, QString::number(threads), charset));
     if (m_vanityWordEdit) {
-        // Allow typing the version letter extra (Love on L…) — limit applies after strip.
+        // Allow typing the version letter extra (Love on L…) - limit applies after strip.
         m_vanityWordEdit->setMaxLength(maxLen + (prefix ? fixed.size() : 0));
     }
 }
@@ -2517,7 +2632,7 @@ void MainWindow::setOverviewReceiveAddress(const QString& address)
     }
     const bool open = m_core && m_core->isOpen();
     const bool busy = m_core && m_core->isBusy();
-    const bool hasAddr = !address.isEmpty() && address != QLatin1String("—");
+    const bool hasAddr = !address.isEmpty() && address != QLatin1String("-");
     if (m_overviewReloadBtn) {
         m_overviewReloadBtn->setEnabled(open && !busy);
     }
@@ -2581,8 +2696,41 @@ void MainWindow::toggleSendAmountUnit()
     }
 
     m_sendAmountInFiat = !m_sendAmountInFiat;
+    m_settings.setSendAmountInFiat(m_sendAmountInFiat);
+    m_settings.sync();
     updateSendUnitButton();
     updateSendAmountHint();
+}
+
+void MainWindow::fillSendAmountSats(qint64 amountSats)
+{
+    if (!m_sendAmountEdit || amountSats <= 0) {
+        if (m_sendAmountEdit) {
+            m_sendAmountEdit->clear();
+        }
+        updateSendAmountHint();
+        return;
+    }
+
+    const double ltc = static_cast<double>(amountSats) / 100000000.0;
+    if (m_sendAmountInFiat) {
+        if (!m_lastQuote.valid || m_lastQuote.price <= 0.0) {
+            showMessage(QStringLiteral("Waiting for price before filling fiat amount."), true);
+            return;
+        }
+        m_sendAmountEdit->setText(QLocale::c().toString(ltc * m_lastQuote.price, 'f', 2));
+    } else {
+        m_sendAmountEdit->setText(QLocale::c().toString(ltc, 'f', 8));
+    }
+    updateSendAmountHint();
+}
+
+qint64 MainWindow::sendMaxSpendableSats() const
+{
+    // Conservative fee cushion so "All" still builds (fee comes from balance).
+    // ~8 native inputs + 1 output ≈ 585 vB; use 750 vB headroom.
+    const qint64 reserve = m_settings.feeSatPerVb() * 750;
+    return qMax<qint64>(0, m_lastBalanceSats - reserve);
 }
 
 void MainWindow::updateSendAmountHint()
@@ -2591,7 +2739,7 @@ void MainWindow::updateSendAmountHint()
         return;
     }
     if (!m_sendAmountEdit) {
-        m_sendAmountHint->setText(QStringLiteral("≈ —"));
+        m_sendAmountHint->setText(QStringLiteral("≈ -"));
         return;
     }
 
@@ -2599,7 +2747,7 @@ void MainWindow::updateSendAmountHint()
     const QString raw = m_sendAmountEdit->text().trimmed().replace(QLatin1Char(','), QLatin1Char('.'));
     const double value = raw.toDouble(&ok);
     if (!ok || value <= 0.0) {
-        m_sendAmountHint->setText(QStringLiteral("≈ —"));
+        m_sendAmountHint->setText(QStringLiteral("≈ -"));
         return;
     }
     if (!m_lastQuote.valid || m_lastQuote.price <= 0.0) {
@@ -2653,7 +2801,7 @@ void MainWindow::applyTheme(bool dark)
     const QString contentBg = contentBase.name(QColor::HexRgb);
     const QColor windowText = theme.palette.color(QPalette::WindowText);
     const QString contentFg = windowText.name(QColor::HexRgb);
-    // Keep secondary copy nearly as strong as primary — muted blues/grays wash out on Mica.
+    // Keep secondary copy nearly as strong as primary - muted blues/grays wash out on Mica.
     const QColor bodyColor = dark ? QColor(236, 239, 245) : QColor(28, 28, 28);
     const QColor mutedColor = dark ? QColor(210, 216, 228) : QColor(55, 55, 55);
     const QString bodyFg = bodyColor.name(QColor::HexRgb);
@@ -2825,6 +2973,24 @@ void MainWindow::applyTheme(bool dark)
             "}"
             "QPushButton#sendUnitButton:hover {"
             "  color: __ACCENT__;"
+            "}"
+            "QPushButton#sendQuickButton {"
+            "  color: __MUTED__;"
+            "  background: transparent;"
+            "  border: 1px solid __BORDER__;"
+            "  border-radius: 8px;"
+            "  font-size: 12px;"
+            "  font-weight: 600;"
+            "  padding: 4px 12px;"
+            "  min-height: 28px;"
+            "}"
+            "QPushButton#sendQuickButton:hover {"
+            "  color: __FG__;"
+            "  border-color: __ACCENT__;"
+            "}"
+            "QPushButton#sendQuickButton:disabled {"
+            "  color: __MUTED__;"
+            "  border-color: __BORDER__;"
             "}"
             "QFrame#hairline {"
             "  background-color: __BORDER__;"
@@ -3083,11 +3249,14 @@ void MainWindow::applyTheme(bool dark)
     applyReadablePalette(m_toastLabel);
     applyReadablePalette(m_createBtn);
     applyReadablePalette(m_importBtn);
+    applyReadablePalette(m_restoreBtn);
     applyReadablePalette(m_unlockBtn);
     applyReadablePalette(m_lockBtn);
     applyReadablePalette(m_newAddressBtn);
     applyReadablePalette(m_copyAddressBtn);
     applyReadablePalette(m_sendBtn);
+    applyReadablePalette(m_sendHalfBtn);
+    applyReadablePalette(m_sendAllBtn);
 
     if (m_priceChart) {
         m_priceChart->setAccentColor(
@@ -3158,7 +3327,7 @@ void MainWindow::paintEvent(QPaintEvent* event)
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
     QMainWindow::resizeEvent(event);
-    // Intentionally no backdrop/theme reapply here — DWM Mica/Acrylic already
+    // Intentionally no backdrop/theme reapply here - DWM Mica/Acrylic already
     // tracks the frame, and re-running applyTheme on every resize spiked CPU.
 }
 

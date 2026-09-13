@@ -1,6 +1,7 @@
 #include "ltc/net/spv.hpp"
 
 #include "ltc/crypto/hash.hpp"
+#include "ltc/crypto/pow.hpp"
 #include "ltc/crypto/random.hpp"
 #include "ltc/params.hpp"
 #include "ltc/util/error_log.hpp"
@@ -35,6 +36,45 @@ Hash256 genesis_hash() {
   Hash256 out{};
   std::memcpy(out.data(), h.data(), 32);
   return out;
+}
+
+Hash256 checkpoint_hash(uint32_t height) {
+  for (const auto& cp : params::kCheckpoints) {
+    if (cp.height != height) continue;
+    Bytes h = from_hex(cp.hash_hex);
+    if (h.size() != 32) throw std::runtime_error("bad checkpoint hash");
+    std::reverse(h.begin(), h.end());
+    Hash256 out{};
+    std::memcpy(out.data(), h.data(), 32);
+    return out;
+  }
+  return Hash256{};
+}
+
+bool has_checkpoint(uint32_t height) {
+  for (const auto& cp : params::kCheckpoints) {
+    if (cp.height == height) return true;
+  }
+  return false;
+}
+
+bool validate_new_header(uint32_t height, const BlockHeader& h, const Hash256& hh) {
+  if (has_checkpoint(height)) {
+    const Hash256 expect = checkpoint_hash(height);
+    if (hh != expect) {
+      log_error("checkpoint mismatch at " + std::to_string(height), "headers");
+      return false;
+    }
+    return true;
+  }
+  // After last hard checkpoint: require Litecoin scrypt PoW.
+  if (height > params::kLastCheckpointHeight) {
+    if (!check_header_pow(h)) {
+      log_error("PoW failed at height " + std::to_string(height), "headers");
+      return false;
+    }
+  }
+  return true;
 }
 
 Hash256 hash_nodes(const Hash256& a, const Hash256& b) {
@@ -230,7 +270,7 @@ void SpvNode::push_recent(uint32_t height, const Hash256& hash) {
 
 void SpvNode::preload_recent_cache() {
   recent_hashes_.clear();
-  // Keep only a small warm window — full 8k preload was ~300ms on every start.
+  // Keep only a small warm window - full 8k preload was ~300ms on every start.
   constexpr uint32_t kWarm = 512;
   if (tip_height_ == 0) {
     push_recent(0, tip_hash_);
@@ -766,7 +806,7 @@ bool SpvNode::ensure_peers(size_t min_peers, size_t max_peers, bool prefer_bloom
     return true;
   }
   if (!peers_.empty()) {
-    // Still have someone — usable even if below preferred min.
+    // Still have someone - usable even if below preferred min.
     select_active(prefer_bloom);
     return true;
   }
@@ -819,6 +859,10 @@ int SpvNode::process_headers_msg(const Bytes& payload, ProgressFn& on_progress) 
       }
     }
     Hash256 hh = h.hash();
+    const uint32_t height = tip_height_ + 1;
+    if (!validate_new_header(height, h, hh)) {
+      return -1;
+    }
     pending_.push_back(PendingHeader{h, hh});
     tip_hash_ = hh;
     tip_height_ = disk_height_ + static_cast<uint32_t>(pending_.size());
@@ -826,7 +870,7 @@ int SpvNode::process_headers_msg(const Bytes& payload, ProgressFn& on_progress) 
     ++added;
   }
   if (added == 0) {
-    // Headers did not attach to our tip — retry/rotate, do not treat as synced.
+    // Headers did not attach to our tip - retry/rotate, do not treat as synced.
     return -1;
   }
   headers_since_flush_ += added;
@@ -886,7 +930,7 @@ int SpvNode::sync_headers_round(ProgressFn on_progress, std::atomic<bool>* stop)
       if (msg.command == "headers") {
         int pr = process_headers_msg(msg.payload, on_progress);
         if (pr < 0) {
-          // Non-connecting batch — rotate and retry; do not mark synced.
+          // Non-connecting batch - rotate and retry; do not mark synced.
           flush_headers();
           log_error("headers batch did not extend tip", "sync_headers");
           if (!rotate_peer(false)) return -1;
@@ -918,7 +962,7 @@ int SpvNode::sync_headers_round(ProgressFn on_progress, std::atomic<bool>* stop)
         }
         continue;
       }
-      // timeout — ask again once in a while
+      // timeout - ask again once in a while
       if (wait > 0 && wait % 15 == 0) {
         try {
           peer->ping();
@@ -938,8 +982,80 @@ int SpvNode::sync_headers_round(ProgressFn on_progress, std::atomic<bool>* stop)
       }
     }
   }
-  if (!got) return -1;  // transient — retry
-  return more ? 1 : 0;
+  if (!got) return -1;  // transient - retry
+  if (more) return 1;
+  // Primary peer says we're caught up - confirm with the rest of the pool.
+  return cross_check_peer_tips();
+}
+
+int SpvNode::cross_check_peer_tips() {
+  if (peers_.size() < 2) return 0;
+  // Prefer peers that advertised a clearly higher chain tip at handshake.
+  for (size_t i = 0; i < peers_.size(); ++i) {
+    if (i == active_idx_) continue;
+    Peer* p = peers_[i].get();
+    if (!p) continue;
+    if (p->peer_start_height() > static_cast<int32_t>(tip_height_) + 32) {
+      active_idx_ = i;
+      log_error("peer claims higher tip (" + std::to_string(p->peer_start_height()) +
+                    ") than local " + std::to_string(tip_height_) + "; switching",
+                "tip_check");
+      try {
+        if (bloom_set_) send_filterload();
+      } catch (...) {
+      }
+      return 1;
+    }
+  }
+
+  int agree = 1;
+  int ahead = 0;
+  int disagree = 0;
+  auto locator = build_locator();
+  ProgressFn nop;
+
+  for (size_t i = 0; i < peers_.size(); ++i) {
+    if (i == active_idx_) continue;
+    Peer* p = peers_[i].get();
+    if (!p) continue;
+    try {
+      p->send_message("getheaders",
+                      encode_getheaders(params::kProtocolVersion, locator, Hash256{}));
+      bool got = false;
+      for (int wait = 0; wait < 8 && !got; ++wait) {
+        NetMessage msg = p->receive_message(1000);
+        handle_ping(*p, msg);
+        if (msg.command != "headers") continue;
+        got = true;
+        auto batch = decode_headers(msg.payload);
+        if (batch.empty()) {
+          ++agree;
+        } else if (batch.front().prev == tip_hash_) {
+          // Peer has more headers extending our tip - keep syncing from them.
+          ++ahead;
+          active_idx_ = i;
+          try {
+            if (bloom_set_) send_filterload();
+          } catch (...) {
+          }
+        } else {
+          ++disagree;
+          log_error("peer tip diverges from local chain", "tip_check");
+        }
+      }
+      if (!got) ++agree;  // timeout: don't punish
+    } catch (const std::exception& e) {
+      log_error(e.what(), "tip_check");
+    }
+  }
+
+  if (ahead > 0) return 1;
+  if (disagree > agree) {
+    log_error("majority peer disagreement on tip; rotating", "tip_check");
+    rotate_peer(false);
+    return 1;
+  }
+  return 0;
 }
 
 void SpvNode::request_filtered_blocks(Peer& peer) {
@@ -994,7 +1110,7 @@ bool SpvNode::handle_filter_message(Peer& peer, const NetMessage& msg, TxHandler
         want.push_back(v);
       }
     }
-    // Chunk getdata — large mempool inv bursts are common without BIP37.
+    // Chunk getdata - large mempool inv bursts are common without BIP37.
     constexpr size_t kGetdataChunk = 100;
     for (size_t i = 0; i < want.size(); i += kGetdataChunk) {
       const size_t n = std::min(kGetdataChunk, want.size() - i);
@@ -1242,7 +1358,7 @@ uint32_t SpvNode::rescan_filtered(uint32_t from_height, TxHandler on_tx, Progres
               tx = deserialize_tx_at(p, pend);
             } catch (const std::exception& e) {
               log_error(e.what(), "rescan/full_block_tx");
-              // Stream is desynced — do NOT advance the cursor past this height.
+              // Stream is desynced - do NOT advance the cursor past this height.
               block_complete = false;
               break;
             }
@@ -1302,7 +1418,7 @@ uint32_t SpvNode::rescan_filtered(uint32_t from_height, TxHandler on_tx, Progres
     if (rotated) continue;
 
     if (got_blocks < want.size()) {
-      // Incomplete batch (timeout) — rotate and retry; never abort the whole sync thread.
+      // Incomplete batch (timeout) - rotate and retry; never abort the whole sync thread.
       log_error("rescan incomplete at height " + std::to_string(h) + "; retry", "rescan");
       if (stop && stop->load()) return cursor;
       if (!rotate_for_scan()) {
@@ -1331,7 +1447,7 @@ uint32_t SpvNode::rescan_filtered(uint32_t from_height, TxHandler on_tx, Progres
     }
 
     if (!pending_txids_.empty()) {
-      // Matched merkleblock txs never arrived — do not raise the scan cursor.
+      // Matched merkleblock txs never arrived - do not raise the scan cursor.
       log_error("rescan: timed out waiting for matched txs at height " + std::to_string(h) +
                     "; retry",
                 "rescan");
@@ -1356,7 +1472,7 @@ void SpvNode::disconnect_peers() {
 }
 
 void SpvNode::interrupt() {
-  // Close sockets so blocked recv/select wake up. Do not destroy Peer objects —
+  // Close sockets so blocked recv/select wake up. Do not destroy Peer objects -
   // the sync thread may still hold pointers; it will observe errors and exit on stop_.
   for (auto& p : peers_) {
     if (p) p->disconnect();
@@ -1421,7 +1537,7 @@ void SpvNode::poll_network(TxHandler on_tx, ProgressFn on_progress, int duration
     peer = active_peer();
     if (!peer) {
       if (!rotate_peer(true)) {
-        // Don't kill the watch loop — caller can rediscover peers next round.
+        // Don't kill the watch loop - caller can rediscover peers next round.
         log_error("no peers during poll; ending poll early", "poll_network");
         break;
       }
@@ -1443,7 +1559,7 @@ void SpvNode::poll_network(TxHandler on_tx, ProgressFn on_progress, int duration
     }
 
     if (bloom_mode && !peer->peer_supports_bloom()) {
-      // Active peer lost bloom — try to rotate back; otherwise stay in full-block mode.
+      // Active peer lost bloom - try to rotate back; otherwise stay in full-block mode.
       if (rotate_peer(true)) {
         peer = active_peer();
         if (peer && peer->peer_supports_bloom()) {
@@ -1510,7 +1626,7 @@ void SpvNode::poll_network(TxHandler on_tx, ProgressFn on_progress, int duration
       }
       last_blocks_req = now;
     }
-    // Re-query mempool periodically — catches deposits that arrived while we were
+    // Re-query mempool periodically - catches deposits that arrived while we were
     // between peers or before the address entered the filter.
     if (bloom_mode &&
         std::chrono::duration_cast<std::chrono::seconds>(now - last_mempool_req).count() >= 20) {

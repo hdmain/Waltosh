@@ -251,7 +251,7 @@ Bytes hmac_sha512(const uint8_t* key, size_t key_len, const uint8_t* data, size_
   constexpr size_t block = 128;
   uint8_t k[block]{};
   if (key_len > block) {
-    // SHA-512 of key — implement SHA-512 inline for HMAC
+    // SHA-512 of key - implement SHA-512 inline for HMAC
     // For BIP32 we only need HMAC-SHA512; implement SHA512 below.
   }
   // Full SHA-512 implementation for HMAC:
@@ -392,6 +392,37 @@ Bytes hmac_sha512(const uint8_t* key, size_t key_len, const uint8_t* data, size_
 
 Bytes hmac_sha512(const Bytes& key, const Bytes& data) {
   return hmac_sha512(key.data(), key.size(), data.data(), data.size());
+}
+
+Bytes hmac_sha256(const uint8_t* key, size_t key_len, const uint8_t* data, size_t data_len) {
+  constexpr size_t block = 64;
+  uint8_t k[block]{};
+  if (key_len > block) {
+    Hash256 h = sha256(key, key_len);
+    std::memcpy(k, h.data(), 32);
+  } else {
+    std::memcpy(k, key, key_len);
+  }
+  uint8_t ipad[block], opad[block];
+  for (size_t i = 0; i < block; ++i) {
+    ipad[i] = uint8_t(k[i] ^ 0x36);
+    opad[i] = uint8_t(k[i] ^ 0x5c);
+  }
+  Bytes inner;
+  inner.reserve(block + data_len);
+  inner.insert(inner.end(), ipad, ipad + block);
+  inner.insert(inner.end(), data, data + data_len);
+  Hash256 ih = sha256(inner);
+  Bytes outer;
+  outer.reserve(block + 32);
+  outer.insert(outer.end(), opad, opad + block);
+  outer.insert(outer.end(), ih.begin(), ih.end());
+  Hash256 oh = sha256(outer);
+  return Bytes(oh.begin(), oh.end());
+}
+
+Bytes hmac_sha256(const Bytes& key, const Bytes& data) {
+  return hmac_sha256(key.data(), key.size(), data.data(), data.size());
 }
 
 Bytes pbkdf2_hmac_sha512(const std::string& password, const std::string& salt, int rounds,

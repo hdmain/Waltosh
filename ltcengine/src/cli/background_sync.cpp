@@ -231,7 +231,7 @@ void BackgroundSync::attach_wallet(Wallet* wallet, const std::string& password) 
     std::lock_guard<std::mutex> lock(status_mu_);
     status_.running = true;
     status_.balance_sats = wallet->balance();
-    status_.detail = "wallet unlocked — preparing address scan";
+    status_.detail = "wallet unlocked - preparing address scan";
   }
 }
 
@@ -248,7 +248,7 @@ void BackgroundSync::detach_wallet() {
     status_.matched_txs = 0;
     status_.rescanning = false;
     status_.hard_refresh = false;
-    status_.detail = "wallet locked — keeping headers warm";
+    status_.detail = "wallet locked - keeping headers warm";
   }
   if (auto* spv = active_spv_.load()) {
     try {
@@ -266,7 +266,7 @@ bool BackgroundSync::has_wallet() const {
 void BackgroundSync::stop() {
   stop_ = true;
   pause_ = false;
-  // Already idle — do not spin for ~10s waiting on thread_done_.
+  // Already idle - do not spin for ~10s waiting on thread_done_.
   if (!running_.load() && thread_done_.load() && !thread_.joinable()) {
     wallet_ = nullptr;
     set_phase(SyncStatus::Phase::Stopped, "sync stopped");
@@ -325,7 +325,7 @@ void BackgroundSync::request_hard_refresh() {
   {
     std::lock_guard<std::mutex> lock(status_mu_);
     status_.hard_refresh = true;
-    status_.detail = "hard refresh queued — waiting for sync loop";
+    status_.detail = "hard refresh queued - waiting for sync loop";
   }
 }
 
@@ -379,7 +379,7 @@ void BackgroundSync::thread_main() {
         rate_sample_time_ = std::chrono::steady_clock::now();
       }
       if (!spv->connect_peers(2, 6)) throw std::runtime_error("no peers available");
-      // New peer session — always push bloom again (dirty may be false after prior watch).
+      // New peer session - always push bloom again (dirty may be false after prior watch).
       bloom_dirty_ = true;
 
       {
@@ -439,12 +439,12 @@ void BackgroundSync::thread_main() {
           }
           refresh_eta_locked();
           if (wallet_) {
-            // cheap unlocked peek avoided — balance updated less often
+            // cheap unlocked peek avoided - balance updated less often
           }
         }
         if (r == 1) {
           stall_retries = 0;
-          continue;  // full speed — immediately request next batch
+          continue;  // full speed - immediately request next batch
         }
         if (r == -1) {
           ++stall_retries;
@@ -461,7 +461,7 @@ void BackgroundSync::thread_main() {
       }
 
       // Pre-login (or after lock): hold the peer session and keep headers fresh
-      // until a wallet is attached — no bloom / private keys involved.
+      // until a wallet is attached - no bloom / private keys involved.
       while (!stop_.load()) {
         bool have_wallet = false;
         {
@@ -470,7 +470,7 @@ void BackgroundSync::thread_main() {
         }
         if (have_wallet) break;
 
-        set_phase(SyncStatus::Phase::Watching, "warming headers — unlock to scan wallet");
+        set_phase(SyncStatus::Phase::Watching, "warming headers - unlock to scan wallet");
         {
           std::lock_guard<std::mutex> lock(status_mu_);
           status_.connected = true;
@@ -501,7 +501,7 @@ void BackgroundSync::thread_main() {
           refresh_eta_locked();
         }
         if (r == 1) continue;  // more headers available
-        // Caught up — wait briefly for unlock / attach_wallet.
+        // Caught up - wait briefly for unlock / attach_wallet.
         for (int i = 0; i < 40 && !stop_.load(); ++i) {
           {
             std::lock_guard<std::mutex> wlock(wallet_mu_);
@@ -529,7 +529,7 @@ void BackgroundSync::thread_main() {
           have_wallet = wallet_ != nullptr;
         }
         if (!have_wallet) {
-          // Detached again — restart outer loop in headers-only mode.
+          // Detached again - restart outer loop in headers-only mode.
           continue;
         }
         bloom_dirty_ = true;
@@ -541,7 +541,7 @@ void BackgroundSync::thread_main() {
           try {
             spv->send_filterload();
           } catch (const std::exception& e) {
-            // No BIP37 peer — rescan_filtered still works via full blocks.
+            // No BIP37 peer - rescan_filtered still works via full blocks.
             bloom_dirty_ = true;
             log_error(e.what(), "background_sync/catchup_filterload");
           }
@@ -632,7 +632,7 @@ void BackgroundSync::thread_main() {
         break;
       }
 
-      // Continuous watch loop — same shape as the TUI:
+      // Continuous watch loop - same shape as the TUI:
       // bloom → live BIP37 poll → (optional user hard refresh) → headers →
       // bloom gap rescan → status → immediately back to poll.
       // Automatic tip full-block verify / soft-confirm were removed from the hot
@@ -651,7 +651,7 @@ void BackgroundSync::thread_main() {
           {
             std::lock_guard<std::mutex> wlock(wallet_mu_);
             if (!wallet_) return;
-            // ingest_tx already persists utxos + tx history + meta — do not call
+            // ingest_tx already persists utxos + tx history + meta - do not call
             // full wallet->save() under this lock (blocks UI snapshot reads).
             wallet_->ingest_tx(tx, height);
             bal = wallet_->balance();
@@ -696,7 +696,7 @@ void BackgroundSync::thread_main() {
           }
         }
 
-        // Live BIP37 window — primary path for instant balance updates.
+        // Live BIP37 window - primary path for instant balance updates.
         // Pass bloom_dirty_ as wake so a new address reloads the filter immediately
         // instead of waiting out the full poll window.
         try {
@@ -706,7 +706,7 @@ void BackgroundSync::thread_main() {
           spv->rotate_peer(true);
         }
 
-        // User hard refresh only — never runs on every cycle.
+        // User hard refresh only - never runs on every cycle.
         if (hard_refresh_.load() && !stop_.load() && !pause_.load()) {
           hard_refresh_.store(false);
           const uint32_t tip = spv->tip_height();
@@ -926,7 +926,7 @@ void BackgroundSync::thread_main() {
         if (status_.hard_refresh || hard_refresh_.load()) {
           hard_refresh_.store(true);
           status_.hard_refresh = true;
-          status_.detail = std::string("hard refresh interrupted — retrying: ") + e.what();
+          status_.detail = std::string("hard refresh interrupted - retrying: ") + e.what();
         }
       }
       set_phase(SyncStatus::Phase::Reconnecting, std::string("retry in 2s: ") + e.what());

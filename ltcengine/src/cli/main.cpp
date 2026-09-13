@@ -15,7 +15,7 @@ namespace {
 
 void usage() {
   std::cerr
-      << "ltcengine 1.0.0 — Litecoin SPV wallet\n"
+      << "ltcengine 1.0.0 - Litecoin SPV wallet\n"
       << "Usage:\n"
       << "  ltcengine                          interactive TUI\n"
       << "  ltcengine tui [datadir]            interactive TUI\n"
@@ -56,7 +56,8 @@ int main(int argc, char** argv) {
 
     if (cmd == "create" && argc >= 4) {
       auto w = ltc::Wallet::create_new(argv[2], argv[3]);
-      std::cout << "mnemonic: " << w.mnemonic() << "\n";
+      std::cout << "mnemonic: " << w.take_mnemonic() << "\n";
+      std::cout << "(shown once - not stored on disk)\n";
       std::cout << "address:  " << w.get_new_address() << "\n";
       w.save(argv[3]);
       return 0;
@@ -120,7 +121,7 @@ int main(int argc, char** argv) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
       }
-      std::cout << "peer ok; syncing headers (pruned SPV — no full blocks)...\n" << std::flush;
+      std::cout << "peer ok; syncing headers (pruned SPV - no full blocks)...\n" << std::flush;
       uint32_t last_print = 0;
       auto on_progress = [&](uint32_t height, const ltc::Hash256& tip) {
         if (height < last_print + 2000 && height != last_print) return;
@@ -146,7 +147,7 @@ int main(int argc, char** argv) {
       return 0;
     }
     if (cmd == "probe" && argc >= 5) {
-      // probe <datadir> <address> <from_height> — bloom-rescan without unlocking wallet
+      // probe <datadir> <address> <from_height> - bloom-rescan without unlocking wallet
       ltc::set_error_log_dir(argv[2]);
       auto decoded = ltc::decode_address(argv[3]);
       ltc::net::SpvNode spv(argv[2]);

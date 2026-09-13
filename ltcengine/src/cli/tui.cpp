@@ -202,7 +202,7 @@ int take_pending_key() {
       if (e == 'D') return -3;
       return 0;
     }
-    // Incomplete escape — wait for more bytes unless it's a lone / non-CSI ESC.
+    // Incomplete escape - wait for more bytes unless it's a lone / non-CSI ESC.
     if (g_key_pending.size() == 1) {
       g_key_pending.clear();
       return 27;
@@ -397,7 +397,7 @@ void clear_line_at(int y, int width) {
   write_line_at(y, Color::Reset, "", width);
 }
 
-// Top-right corner HUD — updates in place without clearing the screen.
+// Top-right corner HUD - updates in place without clearing the screen.
 void draw_corner_hud(const SyncStatus& st) {
   std::string line1 = sync_progress_label(st);
   std::string line2 = "status: " + sync_conn_label(st);
@@ -603,7 +603,7 @@ int menu_select(const std::string& title, const std::vector<std::string>& items,
   for (;;) {
     int k = poll_key(350);
     if (k == 0) {
-      // Idle tick — only status/HUD, not the whole screen.
+      // Idle tick - only status/HUD, not the whole screen.
       refresh_status();
       continue;
     }
@@ -694,11 +694,12 @@ void action_create(Session& s) {
     auto w = Wallet::create_new(dir, pass);
     std::string addr = w.get_new_address();
     w.save(pass);
+    const std::string mnemonic = w.take_mnemonic();
     clear_screen();
-    println(Color::Green, "  Wallet created — background sync starting");
+    println(Color::Green, "  Wallet created - background sync starting");
     hr();
-    println(Color::Accent, "  Write down this mnemonic (shown once):");
-    println(Color::White, "  " + w.mnemonic());
+    println(Color::Accent, "  Write down this mnemonic (shown once, not stored):");
+    println(Color::White, "  " + mnemonic);
     std::cout << "\n";
     println(Color::Cyan, "  First address:");
     println(Color::White, "  " + addr);
@@ -732,7 +733,7 @@ void action_import(Session& s) {
     std::string addr = w.get_new_address();
     w.save(pass);
     clear_screen();
-    println(Color::Green, "  Imported — background sync starting");
+    println(Color::Green, "  Imported - background sync starting");
     println(Color::Cyan, "  First address: " + addr);
     s.datadir = dir;
     s.password = pass;
@@ -763,7 +764,7 @@ void action_open(Session& s) {
     s.password = pass;
     s.wallet = std::make_unique<Wallet>(std::move(w));
     s.start_sync();
-    println(Color::Green, "  Opened — background sync running");
+    println(Color::Green, "  Opened - background sync running");
     println(Color::Dim, "  Balance " + format_ltc(s.wallet->balance()));
     pause_ok();
   } catch (const std::exception& e) {
@@ -860,7 +861,7 @@ void action_sync_status(Session& s) {
   write_line_at(0, Color::Title, "  ltcengine", width);
   write_line_at(1, Color::Dim, "  Litecoin SPV wallet", width);
   write_line_at(2, Color::Title, "  Background sync", width);
-  write_line_at(help_y, Color::Dim, "  Continuous P2P sync — Esc/q back", width);
+  write_line_at(help_y, Color::Dim, "  Continuous P2P sync - Esc/q back", width);
 
   for (;;) {
     auto st = s.status_fn()();
@@ -930,6 +931,14 @@ void action_mnemonic(Session& s) {
     return;
   }
   clear_screen();
+  println(Color::Yellow, "  Recovery mnemonic");
+  hr();
+  if (!s.wallet->has_mnemonic()) {
+    println(Color::Dim, "  Not available. Words are shown only once at wallet create");
+    println(Color::Dim, "  and are never stored on disk. Use your offline backup.");
+    pause_ok();
+    return;
+  }
   println(Color::Yellow, "  Show recovery mnemonic?");
   print(Color::Accent, "  Type YES to reveal: ");
   std::string conf;
@@ -939,7 +948,7 @@ void action_mnemonic(Session& s) {
     pause_ok();
     return;
   }
-  println(Color::White, "  " + s.wallet->mnemonic());
+  println(Color::White, "  " + s.wallet->take_mnemonic());
   pause_ok("Press any key to clear...");
 }
 

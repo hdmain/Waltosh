@@ -51,7 +51,11 @@ class Wallet {
 
   void save(const std::string& password) const;
 
+  // Present only until take_mnemonic() after create; never persisted to disk.
+  [[nodiscard]] bool has_mnemonic() const { return !mnemonic_.empty(); }
   const std::string& mnemonic() const { return mnemonic_; }
+  // Move recovery words out and wipe the in-memory copy (show-once).
+  std::string take_mnemonic();
   const std::string& data_dir() const { return data_dir_; }
 
   // Gap-limit address generation (default 20).
@@ -63,7 +67,7 @@ class Wallet {
   // If prefix=true, pattern must sit right after the network prefix (M/L/ltc1q/ltc1p).
   // timeout_sec hard stop (default 300). Throws on invalid pattern / timeout / cancel.
   // on_progress may be called periodically with attempts + elapsed seconds.
-  // Does not mutate wallet state — call claim_receive_index() under wallet_mutex after success.
+  // Does not mutate wallet state - call claim_receive_index() under wallet_mutex after success.
   uint32_t find_vanity_index(WalletAddressType type, const std::string& pattern,
                              int timeout_sec = 300,
                              const std::function<void(uint64_t tried, int elapsed_sec)>& on_progress = {},
@@ -138,6 +142,7 @@ class Wallet {
   void load_meta();
 
   std::string data_dir_;
+  // Ephemeral: set on create/import only until take_mnemonic() / clear; never written to disk.
   std::string mnemonic_;
   Bytes seed_;
   ExtKey master_;

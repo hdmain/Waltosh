@@ -3,7 +3,7 @@
 Litecoin SPV wallet for **Windows** and **Linux**.
 
 - **GUI**: DRMSketch-based Qt 6 UI (Qlementine, system backdrop where available)
-- **Engine**: [ltcengine](./ltcengine) — BIP39/BIP32 keys, encrypted wallet, pruned P2P SPV sync
+- **Engine**: [ltcengine](./ltcengine) - BIP39/BIP32 keys, encrypted wallet, pruned P2P SPV sync
 
 No explorers or Electrum servers. Sync talks to the Litecoin network on port 9333.
 
@@ -12,7 +12,7 @@ No explorers or Electrum servers. Sync talks to the Litecoin network on port 933
 ```
 Waltosh/
   UI/           Qt GUI (MainWindow, CoreBridge, backdrop)
-  core/         waltosh_core — wallet engine, no Qt Widgets
+  core/         waltosh_core - wallet engine, no Qt Widgets
   ltcengine/    Litecoin crypto / SPV library + CLI
   cmake/        third-party patches
   scripts/      run / deploy helpers
@@ -31,7 +31,7 @@ MainWindow  <queued>--  CoreBridge  --jobs-> WalletCore worker thread -> Wallet 
                                                    BackgroundSync thread (P2P)
 ```
 
-- `core/` has **no Qt Widgets** — only the wallet engine and threads
+- `core/` has **no Qt Widgets** - only the wallet engine and threads
 - `UI/` paints and posts requests; it never calls ltcengine directly
 - Create / unlock / send / address work runs on the **worker** thread
 - SPV networking runs on **BackgroundSync**'s thread
@@ -78,5 +78,7 @@ cd build && cpack -G DEB
 ## Notes
 
 - First sync downloads ~2M+ headers; later runs resume from disk.
-- Backup the mnemonic shown at create time; the password only encrypts the local seed.
+- Backup the mnemonic shown once at create time (confirm a few words); Waltosh does not store it on disk.
+- Wallet file uses Argon2id + AES-256-CBC with HMAC (AEAD). Legacy wallets upgrade on unlock.
+- Header sync checks Litecoin checkpoints and scrypt PoW after the last checkpoint; tips are cross-checked across peers.
 - Backdrop effects are best-effort; unsupported environments use an opaque Qt theme.

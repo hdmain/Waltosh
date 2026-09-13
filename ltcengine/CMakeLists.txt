@@ -31,6 +31,18 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(secp256k1)
 
+# Argon2id for wallet KDF (official PHC reference).
+FetchContent_Declare(
+  argon2
+  GIT_REPOSITORY https://github.com/P-H-C/phc-winner-argon2.git
+  GIT_TAG        20190702
+  GIT_SHALLOW    TRUE
+)
+FetchContent_GetProperties(argon2)
+if(NOT argon2_POPULATED)
+  FetchContent_Populate(argon2)
+endif()
+
 find_package(Threads REQUIRED)
 
 add_library(ltc_core STATIC
@@ -38,6 +50,8 @@ add_library(ltc_core STATIC
   src/crypto/base58.cpp
   src/crypto/bech32.cpp
   src/crypto/aes.cpp
+  src/crypto/aead.cpp
+  src/crypto/pow.cpp
   src/wallet/bip39.cpp
   src/wallet/hd.cpp
   src/wallet/script.cpp
@@ -50,11 +64,21 @@ add_library(ltc_core STATIC
   src/util/fs.cpp
   src/util/error_log.cpp
   src/cli/background_sync.cpp
+  ${argon2_SOURCE_DIR}/src/argon2.c
+  ${argon2_SOURCE_DIR}/src/core.c
+  ${argon2_SOURCE_DIR}/src/blake2/blake2b.c
+  ${argon2_SOURCE_DIR}/src/thread.c
+  ${argon2_SOURCE_DIR}/src/encoding.c
+  ${argon2_SOURCE_DIR}/src/ref.c
 )
 
 target_include_directories(ltc_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${secp256k1_SOURCE_DIR}/include
+)
+target_include_directories(ltc_core PRIVATE
+  ${argon2_SOURCE_DIR}/include
+  ${argon2_SOURCE_DIR}/src
 )
 
 target_link_libraries(ltc_core PUBLIC secp256k1 Threads::Threads)

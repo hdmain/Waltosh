@@ -22,7 +22,7 @@ execute_process(
 )
 
 if(_already_rc EQUAL 0)
-  message(STATUS "qlementine patch already applied — skipping")
+  message(STATUS "qlementine patch already applied - skipping")
   return()
 endif()
 

@@ -50,7 +50,7 @@ class SpvNode {
 
   void set_bloom(const BloomFilter& filter);
   // filterload + BIP35 mempool dump (so unconfirmed matches already in the peer
-  // mempool are pushed — without this, deposits often appear only after 1 conf).
+  // mempool are pushed - without this, deposits often appear only after 1 conf).
   void send_filterload();
   bool has_bloom() const { return bloom_set_; }
 
@@ -60,7 +60,7 @@ class SpvNode {
   // One getheaders round.
   //  1 = more headers likely available
   //  0 = caught up (empty/short batch)
-  // -1 = transient (timeout) — retry same peer without treating as done
+  // -1 = transient (timeout) - retry same peer without treating as done
   // Checks *stop between waits; throws on hard peer failures.
   int sync_headers_round(ProgressFn on_progress = {}, std::atomic<bool>* stop = nullptr);
 
@@ -118,6 +118,9 @@ class SpvNode {
   // Returns: 1 = more headers likely, 0 = caught up / short batch, -1 = non-connecting batch.
   int process_headers_msg(const Bytes& payload, ProgressFn& on_progress);
   void request_headers(Peer& peer);
+  // Ask non-active peers whether our tip is consistent / if they are ahead.
+  // Returns 1 if we should keep syncing (another peer is ahead), 0 if tips agree.
+  int cross_check_peer_tips();
   void request_filtered_blocks(Peer& peer);
   // Handle one merkleblock/tx/inv message; returns true if a merkleblock was consumed.
   bool handle_filter_message(Peer& peer, const NetMessage& msg, TxHandler& on_tx,

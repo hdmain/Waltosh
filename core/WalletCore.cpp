@@ -1,6 +1,7 @@
 #include "WalletCore.hpp"
 
 #include "ltc/cli/background_sync.hpp"
+#include "ltc/crypto/secure.hpp"
 #include "ltc/net/spv.hpp"
 #include "ltc/params.hpp"
 #include "ltc/util/bytes.hpp"
@@ -145,7 +146,7 @@ void WalletCore::request_create(std::string password)
             ltc::fs::ensure_dir(data_dir_);
             ltc::set_error_log_dir(data_dir_);
             auto wallet = std::make_shared<ltc::Wallet>(ltc::Wallet::create_new(data_dir_, password));
-            out.message = wallet->mnemonic();
+            out.message = wallet->take_mnemonic();
             (void)wallet->get_new_address(ltc::WalletAddressType::Nested);
             wallet->save(password);
             ltc::Wallet* raw = nullptr;
@@ -155,8 +156,9 @@ void WalletCore::request_create(std::string password)
                 impl_->password = password;
                 raw = impl_->wallet.get();
             }
+            ltc::secure_wipe(password);
             // Attach to pre-login header sync when possible (avoids reconnect).
-            impl_->sync.start(raw, password);
+            impl_->sync.start(raw, impl_->password);
             out.ok = true;
             out.snapshot = build_snapshot();
             emit_event(Event{EventKind::Opened, true, {}, out.snapshot});
@@ -165,8 +167,9 @@ void WalletCore::request_create(std::string password)
             {
                 std::lock_guard<std::mutex> lock(state_mu_);
                 impl_->wallet.reset();
-                impl_->password.clear();
+                ltc::secure_wipe(impl_->password);
             }
+            ltc::secure_wipe(password);
             emit_event(Event{EventKind::Error, false, e.what(), build_snapshot()});
         }
         set_busy(false);
@@ -193,6 +196,7 @@ void WalletCore::request_import(std::string mnemonic, std::string password)
             ltc::set_error_log_dir(data_dir_);
             auto wallet = std::make_shared<ltc::Wallet>(
                 ltc::Wallet::import_mnemonic(data_dir_, mnemonic, password));
+            ltc::secure_wipe(mnemonic);
             (void)wallet->get_new_address(ltc::WalletAddressType::Nested);
             wallet->save(password);
             ltc::Wallet* raw = nullptr;
@@ -202,7 +206,8 @@ void WalletCore::request_import(std::string mnemonic, std::string password)
                 impl_->password = password;
                 raw = impl_->wallet.get();
             }
-            impl_->sync.start(raw, password);
+            ltc::secure_wipe(password);
+            impl_->sync.start(raw, impl_->password);
             const Snapshot snap = build_snapshot();
             emit_event(Event{EventKind::Opened, true, {}, snap});
             emit_event(Event{EventKind::Imported, true, {}, snap});
@@ -210,8 +215,10 @@ void WalletCore::request_import(std::string mnemonic, std::string password)
             {
                 std::lock_guard<std::mutex> lock(state_mu_);
                 impl_->wallet.reset();
-                impl_->password.clear();
+                ltc::secure_wipe(impl_->password);
             }
+            ltc::secure_wipe(mnemonic);
+            ltc::secure_wipe(password);
             emit_event(Event{EventKind::Error, false, e.what(), build_snapshot()});
         }
         set_busy(false);
@@ -221,7 +228,7 @@ void WalletCore::request_import(std::string mnemonic, std::string password)
 
 void WalletCore::request_unlock(std::string password)
 {
-    // Abort vanity immediately so Unlock is not stuck behind a 5‑minute grind.
+    // Abort vanity immediately so Unlock is not stuck behind a 5-minute grind.
     vanity_cancel_.store(true);
     enqueue([this, password = std::move(password)]() mutable {
         set_busy(true);
@@ -229,7 +236,7 @@ void WalletCore::request_unlock(std::string password)
             if (password.empty()) {
                 throw std::runtime_error("Password is required.");
             }
-            // Keep pre-login header sync alive — attach wallet after load.
+            // Keep pre-login header sync alive - attach wallet after load.
             {
                 std::lock_guard<std::mutex> lock(state_mu_);
                 impl_->wallet.reset();
@@ -240,15 +247,14 @@ void WalletCore::request_unlock(std::string password)
             ltc::set_error_log_dir(data_dir_);
             auto wallet = std::make_shared<ltc::Wallet>(ltc::Wallet::load(data_dir_, password));
             ltc::Wallet* raw = nullptr;
-            std::string pass_copy;
             {
                 std::lock_guard<std::mutex> lock(state_mu_);
                 impl_->wallet = std::move(wallet);
                 impl_->password = password;
                 raw = impl_->wallet.get();
-                pass_copy = impl_->password;
             }
-            impl_->sync.start(raw, pass_copy);
+            ltc::secure_wipe(password);
+            impl_->sync.start(raw, impl_->password);
             impl_->sync.request_bloom_refresh();
             emit_event(Event{EventKind::Opened, true, {}, build_snapshot()});
         } catch (const std::exception& e) {
@@ -256,8 +262,9 @@ void WalletCore::request_unlock(std::string password)
             {
                 std::lock_guard<std::mutex> lock(state_mu_);
                 impl_->wallet.reset();
-                impl_->password.clear();
+                ltc::secure_wipe(impl_->password);
             }
+            ltc::secure_wipe(password);
             if (!impl_->sync.running()) {
                 impl_->sync.start_headers_only(data_dir_);
             }
@@ -276,7 +283,7 @@ void WalletCore::request_lock()
         {
             std::lock_guard<std::mutex> lock(state_mu_);
             impl_->wallet.reset();
-            impl_->password.clear();
+            ltc::secure_wipe(impl_->password);
         }
         // Keep peers/headers warm while locked (no secrets held).
         impl_->sync.detach_wallet();
@@ -587,7 +594,7 @@ Snapshot WalletCore::build_snapshot() const
     {
         std::lock_guard<std::mutex> wlock(impl->sync.wallet_mutex());
         st.balance_sats = wallet->balance();
-        // Only addresses already issued to the user — not the BIP44 gap look-ahead
+        // Only addresses already issued to the user - not the BIP44 gap look-ahead
         // (4 types × gap 20) kept internally for bloom / SPV watching.
         for (const auto& a : wallet->issued_receive_addresses()) {
             snap.receive_addresses.push_back(a.address);

@@ -346,7 +346,7 @@ NetMessage Peer::receive_message(int timeout_ms) {
           return msg;
         }
       } catch (...) {
-        // Bad framing — drop one byte and continue (or rethrow if clearly corrupt magic).
+        // Bad framing - drop one byte and continue (or rethrow if clearly corrupt magic).
         if (recv_buf_.size() >= 4 && read_u32le(recv_buf_.data()) != params::kMagicMainnet) {
           recv_buf_.erase(recv_buf_.begin());
           continue;
@@ -400,7 +400,7 @@ void Peer::handshake(int32_t start_height, const std::string& user_agent, std::a
     } else if (msg.command == "ping") {
       pong(decode_nonce64(msg.payload));
     }
-    // Ignore sendheaders/sendcmpct/feefilter/addr — do not burn a fixed message budget.
+    // Ignore sendheaders/sendcmpct/feefilter/addr - do not burn a fixed message budget.
   }
   if (!got_version || !got_verack) throw std::runtime_error("handshake incomplete");
 }

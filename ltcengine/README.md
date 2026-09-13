@@ -1,6 +1,6 @@
 # ltcengine
 
-Litecoin SPV wallet CLI in C++. Talks to the Litecoin P2P network only — no explorers, Electrum servers, or other third-party APIs.
+Litecoin SPV wallet CLI in C++. Talks to the Litecoin P2P network only - no explorers, Electrum servers, or other third-party APIs.
 
 ## Features
 
@@ -25,7 +25,7 @@ Binary: `bin\ltcengine.exe` (plus `libsecp256k1-2.dll`).
 ### Linux / WSL
 
 ```bash
-# Ubuntu/Debian WSL — one-time deps
+# Ubuntu/Debian WSL - one-time deps
 sudo apt update
 sudo apt install -y build-essential cmake git
 

@@ -10,7 +10,7 @@ set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Svg Network Multimedia)
 
-# Litecoin engine (ltc_core) — expect ./ltcengine in this repo.
+# Litecoin engine (ltc_core) - expect ./ltcengine in this repo.
 set(LTCENGINE_BUILD_CLI ON CACHE BOOL "Build ltcengine CLI/TUI")
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ltcengine/CMakeLists.txt")
     set(LTCENGINE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ltcengine")
@@ -63,6 +63,8 @@ set(WALTOSH_SOURCES
     UI/LivePriceSocket.cpp
     UI/PriceChartWidget.h
     UI/PriceChartWidget.cpp
+    UI/MnemonicBackupDialog.h
+    UI/MnemonicBackupDialog.cpp
     UI/MicaEffect.h
     UI/MicaEffect.cpp
     UI/WaylandBackdrop.h
@@ -99,7 +101,7 @@ target_link_libraries(Waltosh PRIVATE
 if(WIN32)
     target_link_libraries(Waltosh PRIVATE dwmapi)
     target_compile_definitions(Waltosh PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
-    # secp256k1 is shared on Windows — keep DLL beside Waltosh.exe
+    # secp256k1 is shared on Windows - keep DLL beside Waltosh.exe
     add_custom_command(TARGET Waltosh POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:secp256k1>
@@ -138,7 +140,7 @@ elseif(UNIX AND NOT APPLE)
         target_compile_definitions(Waltosh PRIVATE HAVE_WAYLAND)
         message(STATUS "Linux backdrop: ext-background-effect-v1 (COSMIC / Wayland) enabled")
     else()
-        message(STATUS "Linux backdrop: wayland-scanner not found — Wayland blur disabled")
+        message(STATUS "Linux backdrop: wayland-scanner not found - Wayland blur disabled")
     endif()
 endif()
 
@@ -150,7 +152,7 @@ install(TARGETS Waltosh
 set(CPACK_PACKAGE_NAME "waltosh")
 set(CPACK_PACKAGE_VENDOR "WALTOSH")
 set(CPACK_PACKAGE_CONTACT "https://github.com/hdmain/Waltosh")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "WALTOSH — Litecoin SPV wallet (DRMSketch GUI + ltcengine)")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "WALTOSH - Litecoin SPV wallet (DRMSketch GUI + ltcengine)")
 set(CPACK_PACKAGE_DESCRIPTION "Cross-platform Litecoin wallet using Qt6 DRMSketch UI and the ltcengine SPV crypto engine.")
 set(CPACK_PACKAGE_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
 set(CPACK_PACKAGE_VERSION_MINOR ${PROJECT_VERSION_MINOR})
