@@ -1,0 +1,39 @@
+diff --git a/lib/src/style/ThemeManager.cpp b/lib/src/style/ThemeManager.cpp
+index 296b3f2..dd2d58c 100644
+--- a/lib/src/style/ThemeManager.cpp
++++ b/lib/src/style/ThemeManager.cpp
+@@ -18,7 +18,7 @@ ThemeManager::ThemeManager(QlementineStyle* style, QObject* parent)
+ }
+ 
+ QlementineStyle* ThemeManager::style() const {
+-  return nullptr;
++  return _style;
+ }
+ 
+ void ThemeManager::setStyle(QlementineStyle* style) {
+diff --git a/lib/src/style/eventFilters/MenuEventFilter.hpp b/lib/src/style/eventFilters/MenuEventFilter.hpp
+index ad1383e..369821a 100644
+--- a/lib/src/style/eventFilters/MenuEventFilter.hpp
++++ b/lib/src/style/eventFilters/MenuEventFilter.hpp
+@@ -6,6 +6,7 @@
+ #include <oclero/qlementine/style/QlementineStyle.hpp>
+ #include <oclero/qlementine/utils/MenuUtils.hpp>
+ 
++#include <QCoreApplication>
+ #include <QEvent>
+ #include <QObject>
+ #include <QMenu>
+diff --git a/lib/src/widgets/Popover.cpp b/lib/src/widgets/Popover.cpp
+index 3556036..dc9ad31 100644
+--- a/lib/src/widgets/Popover.cpp
++++ b/lib/src/widgets/Popover.cpp
+@@ -69,7 +69,9 @@ public:
+     const auto type = e->type();
+     switch (type) {
+       case QEvent::LayoutRequest:
++#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+       case QEvent::DevicePixelRatioChange:
++#endif
+         callResize();
+         break;
+       default:

@@ -1,0 +1,28 @@
+# Lucide icons (ISC)
+
+Downloaded from: https://cdn.jsdelivr.net/npm/lucide-static@0.460.0/icons/
+
+- house.svg
+- library.svg
+- folder-kanban.svg
+- bell.svg
+- user-round.svg
+- settings.svg
+- circle-help.svg
+- check.svg
+- chevron-down-light.svg
+- chevron-down-dark.svg
+- wallet.svg
+- arrow-down-left.svg
+- arrow-up-right.svg
+- refresh-cw.svg
+- key-round.svg
+- lock.svg
+- chart-line.svg
+- trending-up.svg
+- trending-down.svg
+- copy.svg
+- triangle-alert.svg
+- arrow-up-down.svg
+
+Source project: https://lucide.dev

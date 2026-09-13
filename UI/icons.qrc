@@ -1,0 +1,39 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file alias="house.svg">icons/house.svg</file>
+        <file alias="library.svg">icons/library.svg</file>
+        <file alias="folder-kanban.svg">icons/folder-kanban.svg</file>
+        <file alias="bell.svg">icons/bell.svg</file>
+        <file alias="user-round.svg">icons/user-round.svg</file>
+        <file alias="settings.svg">icons/settings.svg</file>
+        <file alias="circle-help.svg">icons/circle-help.svg</file>
+        <file alias="check.svg">icons/check.svg</file>
+        <file alias="chevron-down-light.svg">icons/chevron-down-light.svg</file>
+        <file alias="chevron-down-dark.svg">icons/chevron-down-dark.svg</file>
+        <file alias="wallet.svg">icons/wallet.svg</file>
+        <file alias="arrow-down-left.svg">icons/arrow-down-left.svg</file>
+        <file alias="arrow-up-right.svg">icons/arrow-up-right.svg</file>
+        <file alias="refresh-cw.svg">icons/refresh-cw.svg</file>
+        <file alias="key-round.svg">icons/key-round.svg</file>
+        <file alias="lock.svg">icons/lock.svg</file>
+        <file alias="chart-line.svg">icons/chart-line.svg</file>
+        <file alias="trending-up.svg">icons/trending-up.svg</file>
+        <file alias="trending-down.svg">icons/trending-down.svg</file>
+        <file alias="copy.svg">icons/copy.svg</file>
+        <file alias="triangle-alert.svg">icons/triangle-alert.svg</file>
+        <file alias="arrow-up-down.svg">icons/arrow-up-down.svg</file>
+        <file alias="rotate-cw.svg">icons/rotate-cw.svg</file>
+    </qresource>
+    <qresource prefix="/themes">
+        <file alias="dark.json">themes/dark.json</file>
+        <file alias="light.json">themes/light.json</file>
+    </qresource>
+    <qresource prefix="/app">
+        <file alias="waltosh.ico">../branding/waltosh.ico</file>
+        <file alias="icon.png">../branding/waltosh.png</file>
+    </qresource>
+    <qresource prefix="/sounds">
+        <file alias="send.wav">sounds/send.wav</file>
+        <file alias="receive.wav">sounds/receive.wav</file>
+    </qresource>
+</RCC>

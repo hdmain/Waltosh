@@ -1,0 +1,130 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-svg
+            mingw-w64-ucrt-x86_64-qt6-multimedia
+            mingw-w64-ucrt-x86_64-qt6-tools
+            git
+
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=/ucrt64
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Deploy Qt + MinGW runtime
+        run: |
+          pacman -S --noconfirm mingw-w64-ucrt-x86_64-ntldd || true
+          bash scripts/deploy-windows.sh build/Waltosh.exe dist/windows
+          test -f dist/windows/Waltosh.exe
+          test -f dist/windows/Qt6Core.dll
+          test -f dist/windows/zlib1.dll || test -f dist/windows/libz.dll || \
+            (echo "missing zlib dependency" >&2; ls -lah dist/windows; exit 1)
+          ls -lah dist/windows
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Waltosh-windows-x64
+          path: dist/windows/
+          if-no-files-found: error
+
+  linux:
+    name: Linux + deb
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            qt6-base-dev \
+            libqt6svg6-dev \
+            qt6-multimedia-dev \
+            git \
+            libx11-dev \
+            libgl1-mesa-dev \
+            libwayland-dev \
+            wayland-protocols \
+            dpkg-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Install into staging prefix
+        run: |
+          cmake --install build --prefix "${{ github.workspace }}/dist/linux"
+          mkdir -p dist/linux-bin
+          cp -a dist/linux/bin/Waltosh dist/linux-bin/
+
+      - name: Package .deb
+        working-directory: build
+        run: |
+          cpack -G DEB
+          mkdir -p "${{ github.workspace }}/dist/deb"
+          cp -a *.deb "${{ github.workspace }}/dist/deb/"
+          ls -lah "${{ github.workspace }}/dist/deb"
+
+      - name: Upload Linux binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: Waltosh-linux-x64
+          path: dist/linux-bin/Waltosh
+          if-no-files-found: error
+
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Waltosh-linux-deb
+          path: dist/deb/*.deb
+          if-no-files-found: error

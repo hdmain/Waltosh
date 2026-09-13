@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="ext_background_effect_v1">
+  <copyright>
+    SPDX-License-Identifier: MIT
+    Protocol source: wayland-protocols staging/ext-background-effect
+  </copyright>
+
+  <interface name="ext_background_effect_manager_v1" version="1">
+    <description summary="background effect factory">
+      This global factory creates background effect objects for surfaces.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager"/>
+    </request>
+
+    <request name="get_background_effect">
+      <description summary="get a background effects object">
+        Instantiate an interface extension for the given wl_surface to add
+        effects like blur for the background behind it.
+      </description>
+      <arg name="id" type="new_id" interface="ext_background_effect_surface_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+
+    <event name="capability">
+      <description summary="supported capabilities changed"/>
+      <arg name="capability" type="uint" enum="capability" summary="capability"/>
+    </event>
+
+    <enum name="capability">
+      <description summary="background effect capability"/>
+      <entry name="blur" value="1" summary="the compositor supports applying blur"/>
+    </enum>
+  </interface>
+
+  <interface name="ext_background_effect_surface_v1" version="1">
+    <description summary="background effects for a surface">
+      The background effect object provides a way to specify a region behind
+      a surface that should have background effects like blur applied.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the background effect object"/>
+    </request>
+
+    <request name="set_blur_region">
+      <description summary="set blur region">
+        This request sets the region of the surface that will have its
+        background blurred. NULL removes the effect.
+      </description>
+      <arg name="region" type="object" interface="wl_region" allow-null="true"
+           summary="blur region of the surface"/>
+    </request>
+  </interface>
+</protocol>
