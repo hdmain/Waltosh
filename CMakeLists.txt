@@ -161,6 +161,20 @@ set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${PROJECT_VERSION}-${CMAKE_SY
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "WALTOSH maintainers")
 set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
-set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+# Do not let dpkg-shlibdeps emit Ubuntu 24.04-only *t64 package names
+# (e.g. libqt6gui6t64), which break installs on older Debian/Ubuntu.
+# Explicit Depends accept either classic or t64 Qt6 package names.
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
+set(CPACK_DEBIAN_PACKAGE_DEPENDS
+    "libc6 (>= 2.35), libstdc++6 (>= 12), libgcc-s1 (>= 3.0), \
+     libqt6core6 (>= 6.2.0) | libqt6core6t64 (>= 6.2.0), \
+     libqt6gui6 (>= 6.2.0) | libqt6gui6t64 (>= 6.2.0), \
+     libqt6widgets6 (>= 6.2.0) | libqt6widgets6t64 (>= 6.2.0), \
+     libqt6network6 (>= 6.2.0) | libqt6network6t64 (>= 6.2.0), \
+     libqt6svg6 (>= 6.2.0) | libqt6svg6t64 (>= 6.2.0), \
+     libqt6multimedia6 (>= 6.2.0) | libqt6multimedia6t64 (>= 6.2.0), \
+     libqt6dbus6 (>= 6.2.0) | libqt6dbus6t64 (>= 6.2.0), \
+     libqt6opengl6 (>= 6.2.0) | libqt6opengl6t64 (>= 6.2.0), \
+     libx11-6, libxkbcommon0, libwayland-client0")
 set(CPACK_GENERATOR "DEB")
 include(CPack)

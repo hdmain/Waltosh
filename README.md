@@ -66,10 +66,11 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
 cmake --build build -j
 ./build/Waltosh
 
-# Optional .deb
+# Optional .deb (Ubuntu 22.04+ / Debian with Qt 6.2+)
 cd build && cpack -G DEB
 ```
 
+The `.deb` Depends accept both classic Qt6 packages (`libqt6gui6`) and Ubuntu 24.04+ `*t64` names. CI builds the package on Ubuntu 22.04 for older glibc compatibility.
 ## Wallet data
 
 - Windows: `%AppData%/WALTOSH/wallet`

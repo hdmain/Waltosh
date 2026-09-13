@@ -68,7 +68,9 @@ jobs:
 
   linux:
     name: Linux + deb
-    runs-on: ubuntu-24.04
+    # Ubuntu 22.04: older glibc + classic libqt6* package names so the .deb
+    # installs on 22.04 and on 24.04 (t64 packages Provide the classic names).
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -114,6 +116,13 @@ jobs:
           cpack -G DEB
           mkdir -p "${{ github.workspace }}/dist/deb"
           cp -a *.deb "${{ github.workspace }}/dist/deb/"
+          # Sanity-check: must not require Ubuntu 24.04-only t64 package names alone.
+          dpkg-deb -f *.deb Depends | tee /tmp/waltosh-depends.txt
+          if grep -E 'libqt6[a-z0-9]+t64' /tmp/waltosh-depends.txt | grep -v '|'; then
+            echo "ERROR: Depends pins t64-only Qt packages (breaks older distros)" >&2
+            cat /tmp/waltosh-depends.txt >&2
+            exit 1
+          fi
           ls -lah "${{ github.workspace }}/dist/deb"
 
       - name: Upload Linux binary
