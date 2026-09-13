@@ -17,6 +17,8 @@ Thumbs.db
 *.so
 *.so.*
 *.dylib
+__pycache__/
+*.pyc
 icon2000.png
 ltcengine_extract/
 ltcengine_archive.zip
