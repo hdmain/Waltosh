@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "SingleInstanceGuard.h"
 
 #include <oclero/qlementine/resources/ResourceInitialization.hpp>
 #include <oclero/qlementine/style/QlementineStyle.hpp>
@@ -9,6 +10,7 @@
 #include <QFontDatabase>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QMessageBox>
 
 namespace {
 
@@ -52,6 +54,18 @@ int main(int argc, char* argv[])
     QApplication::setApplicationName(QStringLiteral("WALTOSH"));
     QApplication::setOrganizationName(QStringLiteral("WALTOSH"));
     QApplication::setApplicationDisplayName(QStringLiteral("WALTOSH"));
+
+    SingleInstanceGuard instance(QStringLiteral("waltosh"));
+    if (!instance.tryBecomePrimary()) {
+        if (!instance.notifyPrimary()) {
+            QMessageBox::warning(
+                nullptr,
+                QStringLiteral("WALTOSH"),
+                QStringLiteral("WALTOSH is already running."));
+        }
+        return 0;
+    }
+
     app.setWindowIcon(QIcon(QStringLiteral(":/app/icon.png")));
     if (app.windowIcon().isNull() || app.windowIcon().availableSizes().isEmpty()) {
         app.setWindowIcon(QIcon(QStringLiteral(":/app/waltosh.ico")));
@@ -79,6 +93,10 @@ int main(int argc, char* argv[])
 
     MainWindow window(style, themeManager);
     window.setWindowIcon(app.windowIcon());
+    QObject::connect(&instance, &SingleInstanceGuard::anotherInstanceTriedToStart, &window,
+                     [&window]() {
+                         window.showFromTray();
+                     });
     window.show();
 
     return app.exec();

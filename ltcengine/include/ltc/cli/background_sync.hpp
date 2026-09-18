@@ -72,8 +72,11 @@ class BackgroundSync {
   bool running() const { return running_.load(); }
   bool has_wallet() const;
 
-  // Ask sync loop to rebuild bloom (e.g. after new address).
+  // Ask sync loop to rebuild bloom (e.g. after new address) and soft-rescan recent tip.
   void request_bloom_refresh();
+
+  // Rewind filter height by lookback blocks and refresh bloom (recover missed deposits).
+  void request_soft_rescan(uint32_t lookback = 288);
 
   // Force header check + recent-block rescan (upgrades unconfirmed txs / balance).
   void request_hard_refresh();
@@ -110,6 +113,8 @@ class BackgroundSync {
   std::atomic<bool> stop_{true};
   std::atomic<bool> pause_{false};
   std::atomic<bool> bloom_dirty_{true};
+  std::atomic<bool> soft_rescan_{false};
+  std::atomic<uint32_t> soft_rescan_lookback_{288};
   std::atomic<bool> hard_refresh_{false};
   std::atomic<bool> wallet_changed_{false};
   std::atomic<bool> running_{false};

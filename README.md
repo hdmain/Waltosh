@@ -59,6 +59,8 @@ cmake --build build -j
 
 Binary: `build/Waltosh.exe`
 
+CI builds a Windows **Inno Setup** installer (`Waltosh-*-windows-x64-setup.exe`) and a portable zip. Tag a version (`v0.1.0`) to publish them on GitHub Releases.
+
 ### Linux
 
 ```bash

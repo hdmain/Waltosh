@@ -255,7 +255,7 @@ void WalletCore::request_unlock(std::string password)
             }
             ltc::secure_wipe(password);
             impl_->sync.start(raw, impl_->password);
-            impl_->sync.request_bloom_refresh();
+            impl_->sync.request_soft_rescan(288);
             emit_event(Event{EventKind::Opened, true, {}, build_snapshot()});
         } catch (const std::exception& e) {
             impl_->sync.detach_wallet();
@@ -311,7 +311,7 @@ void WalletCore::request_new_address(AddressType type)
                 std::lock_guard<std::mutex> wlock(impl_->sync.wallet_mutex());
                 addr = impl_->wallet->get_new_address(to_ltc(type));
                 impl_->wallet->save(impl_->password);
-                impl_->sync.request_bloom_refresh();
+                impl_->sync.request_soft_rescan(288);
             }
             emit_event(Event{EventKind::AddressGenerated, true, addr, build_snapshot()});
         } catch (const std::exception& e) {
@@ -378,7 +378,7 @@ void WalletCore::request_vanity_address(AddressType type, std::string pattern, b
                     addr = wallet->claim_receive_index(to_ltc(type), vanity_idx);
                     wallet->save(password);
                     impl_->sync.resume();
-                    impl_->sync.request_bloom_refresh();
+                    impl_->sync.request_soft_rescan(288);
                     impl_->sync.notify_wallet_changed();
                 }
                 emit_event(Event{EventKind::AddressGenerated, true, addr, build_snapshot()});

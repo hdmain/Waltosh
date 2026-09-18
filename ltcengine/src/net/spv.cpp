@@ -797,6 +797,7 @@ bool SpvNode::rotate_peer(bool prefer_bloom) {
       log_error(e.what(), "rotate_peer/filterload");
     }
   }
+  rerequest_pending_txs();
   return true;
 }
 
@@ -836,6 +837,33 @@ void SpvNode::send_filterload() {
   // Without this, txs broadcast before filterload (or while we were offline) are
   // invisible until they confirm in a block.
   peer->send_message("mempool", Bytes{});
+  rerequest_pending_txs();
+}
+
+void SpvNode::rerequest_pending_txs() {
+  Peer* peer = active_peer();
+  if (!peer || pending_txids_.empty()) return;
+  std::vector<InvVector> items;
+  items.reserve(pending_txids_.size());
+  for (const std::string& key : pending_txids_) {
+    try {
+      Bytes raw = from_hex(key);
+      if (raw.size() != 32) continue;
+      InvVector inv;
+      inv.type = InvType::WitnessTx;
+      std::memcpy(inv.hash.data(), raw.data(), 32);
+      items.push_back(inv);
+      requested_txids_.insert(key);
+    } catch (...) {
+      continue;
+    }
+  }
+  if (items.empty()) return;
+  try {
+    peer->send_message("getdata", encode_getdata(items));
+  } catch (const std::exception& e) {
+    log_error(e.what(), "rerequest_pending_txs");
+  }
 }
 
 void SpvNode::handle_ping(Peer& peer, const NetMessage& msg) {

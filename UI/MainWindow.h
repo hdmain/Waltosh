@@ -17,6 +17,7 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPlainTextEdit;
+class QMenu;
 class QPushButton;
 class QSoundEffect;
 class QStackedWidget;
@@ -40,6 +41,8 @@ public:
         oclero::qlementine::QlementineStyle* style,
         oclero::qlementine::ThemeManager* themeManager,
         QWidget* parent = nullptr);
+
+    void showFromTray();
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -86,6 +89,8 @@ private:
     void playSendSound();
     void playReceiveSound();
     void notifyPaymentReceived(qint64 amountSats);
+    void setupTrayIcon();
+    void quitFromTray();
     [[nodiscard]] int navRowForPage(int page) const;
     [[nodiscard]] QString formatFiatAmount(double amount) const;
     void onFiatChanged();
@@ -178,6 +183,9 @@ private:
 
     QLabel* m_toastLabel = nullptr;
     QSystemTrayIcon* m_trayIcon = nullptr;
+    QMenu* m_trayMenu = nullptr;
+    bool m_forceQuit = false;
+    bool m_trayCloseHintShown = false;
     QSoundEffect* m_sendSound = nullptr;
     QSoundEffect* m_receiveSound = nullptr;
 

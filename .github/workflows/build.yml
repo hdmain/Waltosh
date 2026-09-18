@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -14,8 +15,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      is_release: ${{ steps.ver.outputs.is_release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            ver="${GITHUB_REF#refs/tags/v}"
+            echo "version=${ver}" >> "$GITHUB_OUTPUT"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+          else
+            cmake_ver="$(sed -n 's/^project(Waltosh VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt | head -n1)"
+            short="${GITHUB_SHA::7}"
+            echo "version=${cmake_ver}-${short}" >> "$GITHUB_OUTPUT"
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
   windows:
-    name: Windows
+    name: Windows + installer
+    needs: version
     runs-on: windows-latest
     defaults:
       run:
@@ -59,15 +85,51 @@ jobs:
             (echo "missing zlib dependency" >&2; ls -lah dist/windows; exit 1)
           ls -lah dist/windows
 
-      - name: Upload Windows artifact
+      - name: Zip portable build
+        shell: pwsh
+        run: |
+          $ver = "${{ needs.version.outputs.version }}"
+          New-Item -ItemType Directory -Force -Path dist/portable | Out-Null
+          Compress-Archive -Path dist/windows/* -DestinationPath "dist/portable/Waltosh-$ver-windows-x64.zip" -Force
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Build Inno Setup installer
+        shell: pwsh
+        run: |
+          $ver = "${{ needs.version.outputs.version }}"
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { $iscc = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe" }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found" }
+          New-Item -ItemType Directory -Force -Path dist/installer | Out-Null
+          $src = (Resolve-Path dist/windows).Path
+          $out = (Resolve-Path dist/installer).Path
+          & $iscc `
+            /DMyAppVersion=$ver `
+            "/DSourceDir=$src" `
+            "/DOutputDir=$out" `
+            packaging\windows\waltosh.iss
+          Get-ChildItem dist/installer | Format-Table Name, Length
+
+      - name: Upload Windows portable zip
         uses: actions/upload-artifact@v4
         with:
-          name: Waltosh-windows-x64
-          path: dist/windows/
+          name: Waltosh-windows-x64-portable
+          path: dist/portable/*.zip
+          if-no-files-found: error
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Waltosh-windows-x64-setup
+          path: dist/installer/*.exe
           if-no-files-found: error
 
   linux:
     name: Linux + deb
+    needs: version
     # Ubuntu 22.04: older glibc + classic libqt6* package names so the .deb
     # installs on 22.04 and on 24.04 (t64 packages Provide the classic names).
     runs-on: ubuntu-22.04
@@ -109,6 +171,10 @@ jobs:
           cmake --install build --prefix "${{ github.workspace }}/dist/linux"
           mkdir -p dist/linux-bin
           cp -a dist/linux/bin/Waltosh dist/linux-bin/
+          ver="${{ needs.version.outputs.version }}"
+          mkdir -p dist/linux-portable
+          cp -a dist/linux/bin/Waltosh "dist/linux-portable/Waltosh-${ver}-linux-x64"
+          chmod +x "dist/linux-portable/Waltosh-${ver}-linux-x64"
 
       - name: Package .deb
         working-directory: build
@@ -129,7 +195,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Waltosh-linux-x64
-          path: dist/linux-bin/Waltosh
+          path: dist/linux-portable/*
           if-no-files-found: error
 
       - name: Upload Debian package
@@ -138,3 +204,47 @@ jobs:
           name: Waltosh-linux-deb
           path: dist/deb/*.deb
           if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: [version, windows, linux]
+    if: needs.version.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.deb' -o -name 'Waltosh-*' \) -print
+          find artifacts -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.deb' \) -exec cp -a {} release-assets/ \;
+          # Named Linux binary without extension
+          find artifacts/Waltosh-linux-x64 -type f -exec cp -a {} release-assets/ \;
+          ls -lah release-assets
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          notes="$(printf '%s\n' \
+            "## WALTOSH ${VERSION}" \
+            "" \
+            "### Windows" \
+            "- \`Waltosh-${VERSION}-windows-x64-setup.exe\` — Inno Setup installer" \
+            "- \`Waltosh-${VERSION}-windows-x64.zip\` — portable (no install)" \
+            "" \
+            "### Linux" \
+            "- \`*.deb\` — Debian/Ubuntu package (Qt 6.2+)" \
+            "- \`Waltosh-${VERSION}-linux-x64\` — standalone binary (needs system Qt6)" \
+          )"
+          gh release create "$tag" \
+            --title "WALTOSH ${VERSION}" \
+            --notes "$notes" \
+            release-assets/*

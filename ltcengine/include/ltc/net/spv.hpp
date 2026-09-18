@@ -122,6 +122,8 @@ class SpvNode {
   // Returns 1 if we should keep syncing (another peer is ahead), 0 if tips agree.
   int cross_check_peer_tips();
   void request_filtered_blocks(Peer& peer);
+  // Re-issue getdata for merkle matches still waiting for tx bodies (after peer rotate).
+  void rerequest_pending_txs();
   // Handle one merkleblock/tx/inv message; returns true if a merkleblock was consumed.
   bool handle_filter_message(Peer& peer, const NetMessage& msg, TxHandler& on_tx,
                              ProgressFn& on_progress);

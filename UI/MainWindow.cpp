@@ -33,6 +33,7 @@
 #include <QListWidget>
 #include <QListWidgetItem>
 #include <QLocale>
+#include <QMenu>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
@@ -598,17 +599,7 @@ MainWindow::MainWindow(
     m_receiveSound->setVolume(0.75);
 
     if (QSystemTrayIcon::isSystemTrayAvailable()) {
-        m_trayIcon = new QSystemTrayIcon(this);
-        QIcon trayIcon = windowIcon();
-        if (trayIcon.isNull()) {
-            trayIcon = appWindowIcon();
-        }
-        if (trayIcon.isNull()) {
-            trayIcon = QIcon(QStringLiteral(":/icons/wallet.svg"));
-        }
-        m_trayIcon->setIcon(trayIcon);
-        m_trayIcon->setToolTip(QStringLiteral("WALTOSH"));
-        m_trayIcon->show();
+        setupTrayIcon();
     }
 
     rebuildUi();
@@ -2398,7 +2389,7 @@ void MainWindow::refreshTxHistory(const waltosh::core::Snapshot& snap)
             row.data.kind = QStringLiteral("Sent");
             row.data.status = QStringLiteral("Sent · %1").arg(confLabel);
         } else {
-            row.data.kind = QStringLiteral("Received · %1").arg(confLabel);
+            row.data.kind = QStringLiteral("Received");
             row.data.status = confLabel.left(1).toUpper() + confLabel.mid(1);
         }
         row.data.height = entry.height > 0 ? QString::number(entry.height) : QStringLiteral("mempool");
@@ -2515,6 +2506,52 @@ void MainWindow::playReceiveSound()
     if (m_receiveSound && m_receiveSound->status() != QSoundEffect::Error) {
         m_receiveSound->play();
     }
+}
+
+void MainWindow::setupTrayIcon()
+{
+    m_trayIcon = new QSystemTrayIcon(this);
+    QIcon trayIcon = windowIcon();
+    if (trayIcon.isNull()) {
+        trayIcon = appWindowIcon();
+    }
+    if (trayIcon.isNull()) {
+        trayIcon = QIcon(QStringLiteral(":/icons/wallet.svg"));
+    }
+    m_trayIcon->setIcon(trayIcon);
+    m_trayIcon->setToolTip(QStringLiteral("WALTOSH"));
+
+    m_trayMenu = new QMenu(this);
+    QAction* showAction = m_trayMenu->addAction(QStringLiteral("Show WALTOSH"));
+    m_trayMenu->addSeparator();
+    QAction* quitAction = m_trayMenu->addAction(QStringLiteral("Quit"));
+    m_trayIcon->setContextMenu(m_trayMenu);
+
+    connect(showAction, &QAction::triggered, this, &MainWindow::showFromTray);
+    connect(quitAction, &QAction::triggered, this, &MainWindow::quitFromTray);
+    connect(m_trayIcon, &QSystemTrayIcon::activated, this,
+            [this](QSystemTrayIcon::ActivationReason reason) {
+                if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick) {
+                    showFromTray();
+                }
+            });
+
+    m_trayIcon->show();
+    // Keep process alive when the main window is hidden to tray.
+    QApplication::setQuitOnLastWindowClosed(false);
+}
+
+void MainWindow::showFromTray()
+{
+    showNormal();
+    raise();
+    activateWindow();
+}
+
+void MainWindow::quitFromTray()
+{
+    m_forceQuit = true;
+    close();
 }
 
 void MainWindow::notifyPaymentReceived(qint64 amountSats)
@@ -3285,6 +3322,20 @@ void MainWindow::applyTheme(bool dark)
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    if (!m_forceQuit && m_trayIcon && m_trayIcon->isVisible()) {
+        hide();
+        if (!m_trayCloseHintShown) {
+            m_trayCloseHintShown = true;
+            m_trayIcon->showMessage(
+                QStringLiteral("WALTOSH"),
+                QStringLiteral("Still running in the tray. Right-click the icon to Quit."),
+                QSystemTrayIcon::Information,
+                5000);
+        }
+        event->ignore();
+        return;
+    }
+
     // Tear down network threads synchronously so Quit does not leave a zombie process.
     if (m_prices) {
         m_prices->stop();
@@ -3292,7 +3343,12 @@ void MainWindow::closeEvent(QCloseEvent* event)
     if (m_core) {
         m_core->shutdown();
     }
+    if (m_trayIcon) {
+        m_trayIcon->hide();
+    }
+    QApplication::setQuitOnLastWindowClosed(true);
     QMainWindow::closeEvent(event);
+    QApplication::quit();
 }
 
 void MainWindow::showEvent(QShowEvent* event)

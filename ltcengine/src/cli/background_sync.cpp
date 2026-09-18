@@ -317,7 +317,18 @@ void BackgroundSync::resume() {
   bloom_dirty_ = true;
 }
 
-void BackgroundSync::request_bloom_refresh() { bloom_dirty_ = true; }
+void BackgroundSync::request_bloom_refresh() {
+  bloom_dirty_ = true;
+  // Do not soft-rescan here - that starved live poll for minutes after every
+  // matched tx / filter reload. Explicit request_soft_rescan() for address changes.
+}
+
+void BackgroundSync::request_soft_rescan(uint32_t lookback) {
+  if (lookback == 0) lookback = 288;
+  soft_rescan_lookback_.store(lookback);
+  soft_rescan_.store(true);
+  bloom_dirty_ = true;
+}
 
 void BackgroundSync::request_hard_refresh() {
   hard_refresh_ = true;
@@ -554,16 +565,17 @@ void BackgroundSync::thread_main() {
           if (wallet_) from = wallet_->filter_height();
         }
         // First run / recovery: scan a recent window so deposits during header sync
-        // are not skipped forever. Keep this modest (TUI used 500).
-        constexpr uint32_t kFirstWindow = 500;
+        // are not skipped forever.
+        constexpr uint32_t kFirstWindow = 2016;
         if (from == 0 && tip > kFirstWindow) from = tip - kFirstWindow;
         else if (from == 0) from = 0;
 
-        // If already at tip, still re-check a small recent window after unlock so
-        // the UI shows a real scan and offline deposits near tip are recovered.
-        constexpr uint32_t kUnlockTipWindow = 72;
-        if (tip > 0 && from >= tip) {
-          from = tip > kUnlockTipWindow ? tip - kUnlockTipWindow : 0;
+        // Always re-check a recent tip window after unlock / wallet attach so
+        // offline deposits near tip are recovered (even when filter_height == tip).
+        constexpr uint32_t kUnlockTipWindow = 288;
+        if (tip > 0) {
+          const uint32_t unlock_from = tip > kUnlockTipWindow ? tip - kUnlockTipWindow : 0;
+          if (from > unlock_from) from = unlock_from;
           std::lock_guard<std::mutex> wlock(wallet_mu_);
           if (wallet_) wallet_->rewind_filter_height(from);
         }
@@ -605,6 +617,17 @@ void BackgroundSync::thread_main() {
           try {
             uint32_t scanned =
                 spv->rescan_filtered(from, on_tx, rescan_progress, &stop_);
+            // Small full-block tip slice once at attach (BIP37 false negatives).
+            constexpr uint32_t kCatchupTipFull = 8;
+            const uint32_t tip_full_from = tip > kCatchupTipFull ? tip - kCatchupTipFull : 0;
+            if (!stop_.load() && tip > tip_full_from) {
+              {
+                std::lock_guard<std::mutex> wlock(wallet_mu_);
+                if (wallet_) wallet_->rewind_filter_height(tip_full_from);
+              }
+              scanned =
+                  spv->rescan_filtered(tip_full_from, on_tx, rescan_progress, &stop_, true);
+            }
             {
               std::lock_guard<std::mutex> wlock(wallet_mu_);
               if (wallet_) wallet_->set_filter_height(scanned);
@@ -616,6 +639,10 @@ void BackgroundSync::thread_main() {
               status_.rescan_height = scanned;
               if (wallet_) status_.balance_sats = wallet_->balance();
             }
+            // Catch-up already covered the unlock lookback - avoid immediate soft rescan.
+            soft_rescan_.store(false);
+            last_tip_verify_ = std::chrono::steady_clock::now();
+            last_full_tip_ = tip;
             notify_wallet_changed();
           } catch (const std::exception& e) {
             log_error(e.what(), "background_sync/catchup_rescan");
@@ -696,14 +723,67 @@ void BackgroundSync::thread_main() {
           }
         }
 
-        // Live BIP37 window - primary path for instant balance updates.
-        // Pass bloom_dirty_ as wake so a new address reloads the filter immediately
-        // instead of waiting out the full poll window.
+        // Live poll FIRST - mempool + block invs. Heavy soft/tip rescans after this
+        // starved watching and made balance/tx updates appear only after restart.
+        set_phase(SyncStatus::Phase::Watching, "live / watching mempool+blocks");
         try {
-          spv->poll_network(ingest, on_progress, 15000, &stop_, &bloom_dirty_);
+          spv->poll_network(ingest, on_progress, 30000, &stop_, &bloom_dirty_);
         } catch (const std::exception& e) {
           log_error(e.what(), "background_sync/poll");
           spv->rotate_peer(true);
+        }
+
+        // Soft rescan: address / explicit recovery only (not every bloom reload).
+        if (soft_rescan_.exchange(false) && !stop_.load() && !pause_.load() &&
+            !hard_refresh_.load()) {
+          const uint32_t tip = spv->tip_height();
+          uint32_t lookback = soft_rescan_lookback_.load();
+          if (lookback > 288) lookback = 288;
+          const uint32_t from = tip > lookback ? tip - lookback : 0;
+          constexpr uint32_t kSoftTipFull = 6;
+          const uint32_t tip_full_from = tip > kSoftTipFull ? tip - kSoftTipFull : 0;
+          if (tip > 0 && from < tip) {
+            try {
+              {
+                std::lock_guard<std::mutex> wlock(wallet_mu_);
+                if (wallet_) wallet_->rewind_filter_height(from);
+              }
+              {
+                std::lock_guard<std::mutex> lock(status_mu_);
+                status_.rescanning = true;
+                status_.rescan_height = from;
+                status_.tip_height = tip;
+                status_.detail = "soft rescan " + std::to_string(from) + ".." + std::to_string(tip);
+              }
+              uint32_t scanned =
+                  spv->rescan_filtered(from, ingest, refresh_progress, &stop_, false);
+              if (!stop_.load() && tip > tip_full_from) {
+                {
+                  std::lock_guard<std::mutex> wlock(wallet_mu_);
+                  if (wallet_) wallet_->rewind_filter_height(tip_full_from);
+                }
+                scanned =
+                    spv->rescan_filtered(tip_full_from, ingest, refresh_progress, &stop_, true);
+              }
+              {
+                std::lock_guard<std::mutex> wlock(wallet_mu_);
+                if (wallet_) wallet_->set_filter_height(scanned);
+              }
+              {
+                std::lock_guard<std::mutex> lock(status_mu_);
+                status_.rescanning = false;
+              }
+              last_tip_verify_ = std::chrono::steady_clock::now();
+              last_full_tip_ = tip;
+              notify_wallet_changed();
+            } catch (const std::exception& e) {
+              log_error(e.what(), "background_sync/soft_rescan");
+              // Back off - do not re-queue immediately (that blocked live poll forever).
+              std::lock_guard<std::mutex> lock(status_mu_);
+              status_.rescanning = false;
+              status_.last_error = e.what();
+            }
+          }
         }
 
         // User hard refresh only - never runs on every cycle.
@@ -834,27 +914,27 @@ void BackgroundSync::thread_main() {
             }
           }
 
-          // No-bloom safety net only: rare, tiny full-block tip check so we do not
-          // starve the next poll_network round the way the old always-on verify did.
+          // Light tip safety net only - never starve live poll.
+          // Full recovery of older misses is Hard refresh / soft rescan.
           {
             bool bloom_ok = false;
             if (auto* p = spv->active_peer()) bloom_ok = p->peer_supports_bloom();
             const auto now = std::chrono::steady_clock::now();
-            constexpr auto kNoBloomVerifyInterval = std::chrono::seconds(120);
-            constexpr uint32_t kNoBloomWindow = 3;
+            const auto interval = bloom_ok ? std::chrono::seconds(300) : std::chrono::seconds(180);
+            const uint32_t window = bloom_ok ? 6u : 4u;
             tip = spv->tip_height();
             const bool due = last_tip_verify_.time_since_epoch().count() == 0 ||
-                             now - last_tip_verify_ >= kNoBloomVerifyInterval;
-            if (!bloom_ok && due && tip > 0 && !stop_.load() && !pause_.load() &&
-                !hard_refresh_.load()) {
-              const uint32_t verify_from = tip > kNoBloomWindow ? tip - kNoBloomWindow : 0;
+                             now - last_tip_verify_ >= interval;
+            if (due && tip > 0 && !stop_.load() && !pause_.load() && !hard_refresh_.load() &&
+                !soft_rescan_.load()) {
+              const uint32_t verify_from = tip > window ? tip - window : 0;
               try {
                 {
                   std::lock_guard<std::mutex> lock(status_mu_);
                   status_.rescanning = true;
                   status_.rescan_height = verify_from;
                   status_.tip_height = tip;
-                  status_.detail = "no-bloom tip check";
+                  status_.detail = bloom_ok ? "tip verify" : "no-bloom tip check";
                 }
                 {
                   std::lock_guard<std::mutex> wlock(wallet_mu_);
@@ -875,6 +955,7 @@ void BackgroundSync::thread_main() {
                 notify_wallet_changed();
               } catch (const std::exception& e) {
                 log_error(e.what(), "background_sync/tip_verify");
+                last_tip_verify_ = now;  // avoid tight retry loop
                 std::lock_guard<std::mutex> lock(status_mu_);
                 status_.rescanning = false;
               }

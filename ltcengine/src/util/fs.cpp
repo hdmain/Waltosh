@@ -57,12 +57,26 @@ void write_file(const std::string& path, const Bytes& data) {
     stdfs::create_directories(p.parent_path(), ec);
     if (ec) throw std::runtime_error("failed to create directory for: " + path);
   }
-  std::ofstream out(path, std::ios::binary | std::ios::trunc);
-  if (!out) throw std::runtime_error("failed to open file for writing: " + path);
-  if (!data.empty()) {
-    out.write(reinterpret_cast<const char*>(data.data()),
-              static_cast<std::streamsize>(data.size()));
-    if (!out) throw std::runtime_error("failed to write file: " + path);
+  // Atomic replace: write temp beside target, then rename over it.
+  const stdfs::path tmp = p.string() + ".tmp";
+  {
+    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+    if (!out) throw std::runtime_error("failed to open temp file for writing: " + tmp.string());
+    if (!data.empty()) {
+      out.write(reinterpret_cast<const char*>(data.data()),
+                static_cast<std::streamsize>(data.size()));
+      if (!out) throw std::runtime_error("failed to write temp file: " + tmp.string());
+    }
+    out.flush();
+    if (!out) throw std::runtime_error("failed to flush temp file: " + tmp.string());
+  }
+  std::error_code ec;
+  stdfs::rename(tmp, p, ec);
+  if (ec) {
+    // Windows may need remove+rename when target exists.
+    stdfs::remove(p, ec);
+    stdfs::rename(tmp, p, ec);
+    if (ec) throw std::runtime_error("failed to replace file: " + path);
   }
 }
 

@@ -72,6 +72,8 @@ set(WALTOSH_SOURCES
     UI/PriceChartWidget.cpp
     UI/MnemonicBackupDialog.h
     UI/MnemonicBackupDialog.cpp
+    UI/SingleInstanceGuard.h
+    UI/SingleInstanceGuard.cpp
     UI/MicaEffect.h
     UI/MicaEffect.cpp
     UI/WaylandBackdrop.h
