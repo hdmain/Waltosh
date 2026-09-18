@@ -1,3 +1,18 @@
+diff --git a/lib/src/style/QlementineStyle.cpp b/lib/src/style/QlementineStyle.cpp
+index 1111111..2222222 100644
+--- a/lib/src/style/QlementineStyle.cpp
++++ b/lib/src/style/QlementineStyle.cpp
+@@ -4118,8 +4118,10 @@ int QlementineStyle::pixelMetric(PixelMetric metric, const QStyleOption* option,
+       return _impl->theme.iconSize.height();
+ 
+     // LineEdit.
++#if QT_VERSION >= QT_VERSION_CHECK(6, 3, 0)
+     case PM_LineEditIconMargin:
+       return _impl->theme.spacing;
++#endif
+     case PM_LineEditIconSize:
+       return _impl->theme.iconSize.height();
+ 
 diff --git a/lib/src/style/ThemeManager.cpp b/lib/src/style/ThemeManager.cpp
 index 296b3f2..dd2d58c 100644
 --- a/lib/src/style/ThemeManager.cpp

@@ -208,7 +208,10 @@ jobs:
   release:
     name: GitHub Release
     needs: [version, windows, linux]
-    if: needs.version.outputs.is_release == 'true'
+    if: |
+      always() &&
+      needs.version.outputs.is_release == 'true' &&
+      needs.windows.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -221,13 +224,14 @@ jobs:
       - name: Collect release assets
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.deb' -o -name 'Waltosh-*' \) -print
-          find artifacts -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.deb' \) -exec cp -a {} release-assets/ \;
-          # Named Linux binary without extension
-          find artifacts/Waltosh-linux-x64 -type f -exec cp -a {} release-assets/ \;
+          find artifacts -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.deb' \) -exec cp -a {} release-assets/ \; || true
+          if [[ -d artifacts/Waltosh-linux-x64 ]]; then
+            find artifacts/Waltosh-linux-x64 -type f -exec cp -a {} release-assets/ \; || true
+          fi
           ls -lah release-assets
+          test -n "$(ls -A release-assets)"
 
-      - name: Create GitHub Release
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.version.outputs.version }}
@@ -241,10 +245,15 @@ jobs:
             "- \`Waltosh-${VERSION}-windows-x64.zip\` — portable (no install)" \
             "" \
             "### Linux" \
-            "- \`*.deb\` — Debian/Ubuntu package (Qt 6.2+)" \
-            "- \`Waltosh-${VERSION}-linux-x64\` — standalone binary (needs system Qt6)" \
+            "- \`*.deb\` — Debian/Ubuntu package (Qt 6.2+), when available" \
+            "- \`Waltosh-${VERSION}-linux-x64\` — standalone binary (needs system Qt6), when available" \
           )"
-          gh release create "$tag" \
-            --title "WALTOSH ${VERSION}" \
-            --notes "$notes" \
-            release-assets/*
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release-assets/* --clobber
+            gh release edit "$tag" --title "WALTOSH ${VERSION}" --notes "$notes"
+          else
+            gh release create "$tag" \
+              --title "WALTOSH ${VERSION}" \
+              --notes "$notes" \
+              release-assets/*
+          fi
